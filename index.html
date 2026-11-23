@@ -1,0 +1,993 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CIRCUIT LIVE TELEMETRY // PIT MONITOR</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@500;700;800&display=swap');
+
+    :root {
+      --accent-primary: #e11d48;
+      --accent-glow: rgba(225, 29, 72, 0.35);
+      --accent-secondary: #38bdf8;
+    }
+
+    body.theme-debug {
+      --accent-primary: #ef4444;
+      --accent-glow: rgba(239, 68, 68, 0.35);
+      --accent-secondary: #22d3ee;
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background-color: #07090e;
+      color: #f8fafc;
+      overflow-x: hidden;
+    }
+
+    .mono {
+      font-family: 'JetBrains Mono', monospace;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .panel {
+      background: linear-gradient(145deg, #0f1420 0%, #0a0d14 100%);
+      border: 1px solid rgba(148, 163, 184, 0.14);
+      box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.7);
+    }
+
+    .accent-border {
+      border-color: var(--accent-primary);
+    }
+
+    .accent-text {
+      color: var(--accent-primary);
+    }
+
+    /* 拡張式サイドバナー（ドロワー）アニメーション */
+    #sideDrawer {
+      transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+      transform: translateX(-100%);
+    }
+    #sideDrawer.open {
+      transform: translateX(0);
+    }
+
+    #drawerBackdrop {
+      transition: opacity 0.25s ease;
+      opacity: 0;
+      pointer-events: none;
+    }
+    #drawerBackdrop.open {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .vehicle-btn {
+      transition: all 0.18s ease;
+    }
+    .vehicle-btn.active {
+      background: linear-gradient(90deg, rgba(225, 29, 72, 0.22) 0%, rgba(15, 23, 42, 0.8) 100%);
+      border-color: var(--accent-primary);
+      box-shadow: 0 0 18px var(--accent-glow);
+    }
+
+    /* シフトインジケーターLED */
+    .shift-led {
+      transition: background-color 0.08s ease, box-shadow 0.08s ease;
+    }
+
+    /* ポップアップモーダルアニメーション */
+    #arduinoMonitorModal, #qrShareModal {
+      transition: opacity 0.2s ease, transform 0.2s ease;
+    }
+    #arduinoMonitorModal.hidden-modal, #qrShareModal.hidden-modal {
+      opacity: 0;
+      pointer-events: none;
+      transform: scale(0.97);
+    }
+    #arduinoMonitorModal.open-modal, #qrShareModal.open-modal {
+      opacity: 1;
+      pointer-events: auto;
+      transform: scale(1);
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col selection:bg-rose-600 selection:text-white">
+
+  <!-- ドロワー背景オーバーレイ -->
+  <div id="drawerBackdrop" onclick="toggleDrawer(false)" class="fixed inset-0 bg-black/75 backdrop-blur-sm z-40"></div>
+
+  <!-- 拡張式サイドバナー（車種選択＆診断コントロール） -->
+  <aside id="sideDrawer" class="fixed top-0 left-0 h-full w-80 sm:w-96 bg-[#0b0f19] border-r border-slate-800 z-50 flex flex-col justify-between overflow-y-auto">
+    <div class="p-5">
+      <!-- ドロワーヘッダー -->
+      <div class="flex items-center justify-between pb-4 border-b border-slate-800">
+        <div>
+          <p class="text-[11px] font-bold tracking-widest text-rose-500 uppercase">VEHICLE & SYSTEM</p>
+          <h2 class="text-lg font-extrabold text-white tracking-tight">車両プロファイル切替</h2>
+        </div>
+        <button onclick="toggleDrawer(false)" class="p-2 rounded-lg bg-slate-800/80 hover:bg-slate-700 text-slate-300 text-sm font-bold">
+          ✕ 閉じる
+        </button>
+      </div>
+
+      <!-- MASERATI 本番運用車両リスト -->
+      <div class="mt-5">
+        <div class="flex items-center justify-between mb-2.5">
+          <span class="text-xs font-bold tracking-wider text-slate-400 uppercase">MASERATI (2023+ PRODUCTION)</span>
+          <span class="text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-300 mono">SGW BRIDGE</span>
+        </div>
+        <div class="space-y-2">
+          <button onclick="selectVehicle('GRECALE')" data-model="GRECALE" class="vehicle-btn w-full text-left p-3 rounded-xl border border-slate-800 bg-slate-900/60 hover:border-slate-600">
+            <div class="flex items-center justify-between">
+              <span class="font-bold text-white text-sm">Grecale</span>
+              <span class="text-[11px] mono px-2 py-0.5 rounded bg-sky-950 text-sky-300 border border-sky-800/60">Q4 AWD</span>
+            </div>
+            <p class="text-xs text-slate-400 mt-1">Trofeo / Modena • 前後駆動配分・8AT油温監視</p>
+          </button>
+
+          <button onclick="selectVehicle('GRANTURISMO')" data-model="GRANTURISMO" class="vehicle-btn w-full text-left p-3 rounded-xl border border-slate-800 bg-slate-900/60 hover:border-slate-600">
+            <div class="flex items-center justify-between">
+              <span class="font-bold text-white text-sm">GranTurismo</span>
+              <span class="text-[11px] mono px-2 py-0.5 rounded bg-sky-950 text-sky-300 border border-sky-800/60">Q4 AWD</span>
+            </div>
+            <p class="text-xs text-slate-400 mt-1">Nettuno V6 • リア偏向AWD・e-LSDトルク配分</p>
+          </button>
+
+          <button onclick="selectVehicle('GRANCABRIO')" data-model="GRANCABRIO" class="vehicle-btn w-full text-left p-3 rounded-xl border border-slate-800 bg-slate-900/60 hover:border-slate-600">
+            <div class="flex items-center justify-between">
+              <span class="font-bold text-white text-sm">GranCabrio</span>
+              <span class="text-[11px] mono px-2 py-0.5 rounded bg-sky-950 text-sky-300 border border-sky-800/60">Q4 AWD</span>
+            </div>
+            <p class="text-xs text-slate-400 mt-1">Nettuno V6 • Q4 AWD・ブースト＆熱マネジメント</p>
+          </button>
+
+          <button onclick="selectVehicle('MCPURA')" data-model="MCPURA" class="vehicle-btn w-full text-left p-3 rounded-xl border border-slate-800 bg-slate-900/60 hover:border-slate-600">
+            <div class="flex items-center justify-between">
+              <span class="font-bold text-white text-sm">MCPURA</span>
+              <span class="text-[11px] mono px-2 py-0.5 rounded bg-rose-950 text-rose-300 border border-rose-800/60">MR / RWD</span>
+            </div>
+            <p class="text-xs text-slate-400 mt-1">Nettuno V6 630cv • 8速DCT・リア左右e-LSD配分</p>
+          </button>
+
+          <button onclick="selectVehicle('GT2_STRADALE')" data-model="GT2_STRADALE" class="vehicle-btn w-full text-left p-3 rounded-xl border border-slate-800 bg-slate-900/60 hover:border-slate-600">
+            <div class="flex items-center justify-between">
+              <span class="font-bold text-white text-sm">GT2 Stradale</span>
+              <span class="text-[11px] mono px-2 py-0.5 rounded bg-amber-950 text-amber-300 border border-amber-800/60">TRACK RWD</span>
+            </div>
+            <p class="text-xs text-slate-400 mt-1">Nettuno V6 640cv • サーキット専用・ブレーキ圧重視</p>
+          </button>
+        </div>
+      </div>
+
+      <!-- DEBUG / TEST 開発車両 -->
+      <div class="mt-6 pt-4 border-t border-slate-800">
+        <div class="flex items-center justify-between mb-2.5">
+          <span class="text-xs font-bold tracking-wider text-cyan-400 uppercase">DEBUG / DEVELOPMENT TEST</span>
+          <span class="text-[10px] px-2 py-0.5 rounded bg-cyan-950 text-cyan-300 mono">B9 MLB-EVO</span>
+        </div>
+        <button onclick="selectVehicle('DEBUG_RS5')" data-model="DEBUG_RS5" class="vehicle-btn w-full text-left p-3 rounded-xl border border-slate-800 bg-slate-900/60 hover:border-cyan-600">
+          <div class="flex items-center justify-between">
+            <span class="font-bold text-white text-sm">Debug (2019 Audi RS5)</span>
+            <span class="text-[11px] mono px-2 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-800/60">quattro</span>
+          </div>
+          <p class="text-xs text-slate-400 mt-1">RS5 Sportback 2.9 TFSI • 40:60 AWD＆UDS 0x22検証</p>
+        </button>
+      </div>
+
+      <!-- 動作モード＆リモート診断コマンド -->
+      <div class="mt-6 pt-4 border-t border-slate-800 space-y-3">
+        <span class="text-xs font-bold tracking-wider text-slate-400 uppercase block">ARDUINO & PIT CONTROLS</span>
+
+        <!-- Arduino接続診断モニターを開く -->
+        <button onclick="toggleDrawer(false); toggleMonitorModal(true);" class="w-full py-2.5 px-3 rounded-xl bg-cyan-950/80 hover:bg-cyan-900/80 border border-cyan-700/70 text-xs font-bold text-cyan-200 flex items-center justify-center gap-2">
+          <span>📡 Arduino 接続ステータス監視画面を開く</span>
+        </button>
+
+        <!-- Arduino側ダミー送信モード切替 -->
+        <div class="p-3 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-between">
+          <div>
+            <p class="text-xs font-bold text-white">Arduino側 ダミーデータ送信</p>
+            <p class="text-[11px] text-slate-400">実機R4から擬似走行データをMQTT配信</p>
+          </div>
+          <div class="flex gap-1">
+            <button onclick="setArduinoSim(true)" class="px-2.5 py-1 rounded text-[11px] font-bold bg-cyan-600 hover:bg-cyan-500 text-white">ON</button>
+            <button onclick="setArduinoSim(false)" class="px-2.5 py-1 rounded text-[11px] font-bold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700">OFF</button>
+          </div>
+        </div>
+
+        <!-- ブラウザ単体プレビュー切替 -->
+        <div class="p-3 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-between">
+          <div>
+            <p class="text-xs font-bold text-white">ブラウザ単体ローカルデモ</p>
+            <p class="text-[11px] text-slate-400">Arduino電源OFF時のUI単体プレビュー</p>
+          </div>
+          <button id="demoToggleBtn" onclick="toggleLocalDemoMode()" class="px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-800 text-slate-300 border border-slate-700">
+            OFF
+          </button>
+        </div>
+
+        <!-- Arduino実車UDSスキャン送信 -->
+        <button onclick="sendRemoteCommand('uds_scan', '1')" class="w-full py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-bold text-slate-200 flex items-center justify-center gap-2">
+          <span>🔍 実車ECU UDSパラメータ自動スキャン</span>
+        </button>
+
+        <!-- セッションピーク値リセット -->
+        <button onclick="resetPeaks()" class="w-full py-2 px-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-xs font-semibold text-slate-400">
+          ↺ 最高速・最大G記録をリセット
+        </button>
+      </div>
+    </div>
+
+    <!-- ログコンソール -->
+    <div class="p-4 bg-black/60 border-t border-slate-800">
+      <p class="text-[10px] font-bold text-slate-500 uppercase mb-1.5 mono">SYSTEM / ECU DIAGNOSTIC LOG</p>
+      <div id="sysLog" class="h-24 overflow-y-auto text-[11px] mono text-slate-400 space-y-1 leading-relaxed">
+        <div>[SYS] Dashboard initialized. Listening for Arduino R4 WiFi...</div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ================= ポップアップ式：Arduino システム接続モニター ================= -->
+  <div id="arduinoMonitorModal" class="hidden-modal fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/80 backdrop-blur-md">
+    <div class="w-full max-w-3xl bg-[#0b101b] border border-slate-700/90 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
+      <!-- モーダルヘッダー -->
+      <div class="px-5 py-4 bg-slate-900/90 border-b border-slate-800 flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <span id="modalPulseDot" class="w-3 h-3 rounded-full bg-amber-500"></span>
+          <div>
+            <h2 class="text-base sm:text-lg font-extrabold text-white tracking-tight">ARDUINO UNO R4 WiFi // 接続診断モニター</h2>
+            <p class="text-[11px] mono text-slate-400">TOPIC: maserati_circuit_test_9981/telemetry</p>
+          </div>
+        </div>
+        <button onclick="toggleMonitorModal(false)" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold border border-slate-700">
+          ✕ 閉じる
+        </button>
+      </div>
+
+      <!-- モーダル本体 -->
+      <div class="p-5 overflow-y-auto space-y-5">
+        <!-- 4段階 通信経路ステータスフロー -->
+        <div>
+          <p class="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2.5">END-TO-END TELEMETRY PIPELINE</p>
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+            <!-- Stage 1: Browser -->
+            <div class="p-3 rounded-xl bg-slate-950 border border-slate-800">
+              <div class="flex items-center justify-between mb-1">
+                <span class="text-[10px] font-bold text-slate-500 mono">1. PIT BROWSER</span>
+                <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+              </div>
+              <p class="text-xs font-extrabold text-emerald-400">READY</p>
+              <p class="text-[10px] text-slate-400 mt-0.5 truncate">UI Client Active</p>
+            </div>
+
+            <!-- Stage 2: MQTT Broker -->
+            <div class="p-3 rounded-xl bg-slate-950 border border-slate-800">
+              <div class="flex items-center justify-between mb-1">
+                <span class="text-[10px] font-bold text-slate-500 mono">2. MQTT CLOUD</span>
+                <span id="pipeMqttDot" class="w-2 h-2 rounded-full bg-amber-500"></span>
+              </div>
+              <p id="pipeMqttState" class="text-xs font-extrabold text-amber-400">CONNECTING</p>
+              <p class="text-[10px] text-slate-400 mt-0.5 truncate">broker.emqx.io</p>
+            </div>
+
+            <!-- Stage 3: Arduino R4 WiFi -->
+            <div class="p-3 rounded-xl bg-slate-950 border border-slate-800">
+              <div class="flex items-center justify-between mb-1">
+                <span class="text-[10px] font-bold text-slate-500 mono">3. ARDUINO R4</span>
+                <span id="pipeArdDot" class="w-2 h-2 rounded-full bg-rose-500"></span>
+              </div>
+              <p id="pipeArdState" class="text-xs font-extrabold text-rose-400">OFFLINE / WAIT</p>
+              <p id="pipeArdSub" class="text-[10px] text-slate-400 mt-0.5 truncate">No packets yet</p>
+            </div>
+
+            <!-- Stage 4: Vehicle CAN / Sim -->
+            <div class="p-3 rounded-xl bg-slate-950 border border-slate-800">
+              <div class="flex items-center justify-between mb-1">
+                <span class="text-[10px] font-bold text-slate-500 mono">4. DATA SOURCE</span>
+                <span id="pipeCanDot" class="w-2 h-2 rounded-full bg-slate-500"></span>
+              </div>
+              <p id="pipeCanState" class="text-xs font-extrabold text-slate-300">STANDBY</p>
+              <p id="pipeCanSub" class="text-[10px] text-slate-400 mt-0.5 truncate">500kbps / SIM</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- 詳細メトリクス 8項目グリッド -->
+        <div>
+          <p class="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2.5">HARDWARE & LINK DIAGNOSTICS</p>
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+            <div class="p-3 rounded-xl bg-slate-900/90 border border-slate-800">
+              <p class="text-[10px] text-slate-400">受信レート (更新頻度)</p>
+              <p id="monHz" class="mono text-base font-extrabold text-cyan-400 mt-0.5">0.0 Hz</p>
+            </div>
+            <div class="p-3 rounded-xl bg-slate-900/90 border border-slate-800">
+              <p class="text-[10px] text-slate-400">最終受信からの経過</p>
+              <p id="monAge" class="mono text-base font-extrabold text-white mt-0.5">-- 秒前</p>
+            </div>
+            <div class="p-3 rounded-xl bg-slate-900/90 border border-slate-800">
+              <p class="text-[10px] text-slate-400">PING 往復遅延 (RTT)</p>
+              <p id="monRtt" class="mono text-base font-extrabold text-emerald-400 mt-0.5">-- ms</p>
+            </div>
+            <div class="p-3 rounded-xl bg-slate-900/90 border border-slate-800">
+              <p class="text-[10px] text-slate-400">Wi-Fi 電波強度 (RSSI)</p>
+              <p id="monRssi" class="mono text-base font-extrabold text-white mt-0.5">-- dBm</p>
+            </div>
+            <div class="p-3 rounded-xl bg-slate-900/90 border border-slate-800">
+              <p class="text-[10px] text-slate-400">Arduino 連続稼働時間</p>
+              <p id="monUptime" class="mono text-sm font-bold text-slate-200 mt-0.5">00:00:00</p>
+            </div>
+            <div class="p-3 rounded-xl bg-slate-900/90 border border-slate-800">
+              <p class="text-[10px] text-slate-400">Arduino IPアドレス</p>
+              <p id="monIp" class="mono text-sm font-bold text-slate-200 mt-0.5">--.--.--.--</p>
+            </div>
+            <div class="p-3 rounded-xl bg-slate-900/90 border border-slate-800">
+              <p class="text-[10px] text-slate-400">Arduino側 同期車種</p>
+              <p id="monRemoteModel" class="mono text-sm font-bold text-amber-400 mt-0.5">UNSYNCED</p>
+            </div>
+            <div class="p-3 rounded-xl bg-slate-900/90 border border-slate-800">
+              <p class="text-[10px] text-slate-400">累計受信パケット数</p>
+              <p id="monPacketCount" class="mono text-sm font-bold text-slate-200 mt-0.5">0 pkts</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- リモート制御アクションバー -->
+        <div class="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800 space-y-2.5">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <div class="flex flex-wrap items-center gap-2">
+              <button id="btnModalPing" onclick="sendPingTest()" class="px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white text-xs font-bold shadow transition">
+                📡 PING 疎通テスト
+              </button>
+              <button id="btnModalSimOn" onclick="setArduinoSim(true)" class="px-3 py-2 rounded-lg bg-cyan-600/30 hover:bg-cyan-600/50 active:scale-95 text-cyan-200 border border-cyan-500/50 text-xs font-bold transition">
+                🧪 R4ダミーデモ受信 ON
+              </button>
+              <button id="btnModalSimOff" onclick="setArduinoSim(false)" class="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-300 border border-slate-700 text-xs font-bold transition">
+                R4ダミー OFF (実車専用)
+              </button>
+            </div>
+            <button onclick="sendRemoteCommand('uds_scan', '1')" class="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-200 border border-slate-700 text-xs font-bold transition">
+              🔍 実車UDSスキャン
+            </button>
+          </div>
+          <div class="flex items-center justify-between text-[11px] mono pt-1 border-t border-slate-800/80">
+            <span class="text-slate-500">COMMAND FEEDBACK:</span>
+            <span id="modalCmdFeedback" class="text-cyan-400 font-bold">Ready</span>
+          </div>
+        </div>
+
+        <!-- 受信中の生JSONパケットインスペクタ -->
+        <div>
+          <div class="flex items-center justify-between mb-1.5">
+            <span class="text-[11px] font-bold text-slate-400 uppercase tracking-wider">LATEST RAW JSON PAYLOAD FROM ARDUINO</span>
+            <span class="text-[10px] mono text-slate-500">LIVE STREAM INSPECTOR</span>
+          </div>
+          <pre id="rawJsonBox" class="p-3 rounded-xl bg-black/80 border border-slate-800 text-[11px] mono text-cyan-300 overflow-x-auto whitespace-pre-wrap break-all leading-relaxed">Waiting for telemetry packet from Arduino UNO R4 WiFi...</pre>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= ポップアップ式：スマホ観戦用 QRコード拡大モーダル ================= -->
+  <div id="qrShareModal" onclick="if(event.target===this) toggleQrModal(false)" class="hidden-modal fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md">
+    <div class="w-full max-w-md bg-[#0b101b] border border-slate-700 rounded-2xl shadow-2xl overflow-hidden flex flex-col">
+      <!-- モーダルヘッダー -->
+      <div class="px-5 py-4 bg-slate-900/95 border-b border-slate-800 flex items-center justify-between">
+        <div>
+          <p class="text-[10px] font-extrabold tracking-widest text-rose-500 uppercase">SMARTPHONE LIVE TELEMETRY</p>
+          <h2 class="text-base sm:text-lg font-black text-white tracking-tight">📱 スマホ観戦用 QRコード</h2>
+        </div>
+        <button onclick="toggleQrModal(false)" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold border border-slate-700">
+          ✕ 閉じる
+        </button>
+      </div>
+
+      <!-- QRコード本体エリア -->
+      <div class="p-6 flex flex-col items-center text-center space-y-4">
+        <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-slate-900 border border-slate-700 text-xs">
+          <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+          <span class="text-slate-300 font-semibold">配信中車両:</span>
+          <span id="qrVehicleName" class="font-extrabold text-white">Grecale</span>
+        </div>
+
+        <!-- 白背景の高コントラスト大型QRコンテナ -->
+        <div class="p-5 bg-white rounded-2xl shadow-2xl ring-4 ring-white/10 flex items-center justify-center">
+          <div id="qrBigContainer" class="w-[260px] h-[260px] flex items-center justify-center"></div>
+        </div>
+
+        <p class="text-xs sm:text-sm text-slate-300 leading-relaxed">
+          スマートフォンのカメラで読み取ると、<br>
+          お手元の画面でリアルタイム走行データをご覧いただけます。
+        </p>
+
+        <!-- ローカルHTML（file://）警告ガイド -->
+        <div id="qrLocalFileNotice" class="hidden w-full p-3 rounded-xl bg-amber-950/60 border border-amber-600/50 text-left text-[11px] text-amber-200 leading-relaxed">
+          ⚠ 現在PCのローカルファイル（<span class="mono">file://</span>）で開いています。スマホで開くには、Vercel / GitHub Pages の公開URL、または同一Wi-Fi内のPCローカルサーバーURLを下記へ入力してください。
+        </div>
+
+        <!-- URL確認・編集・コピーバー -->
+        <div class="w-full space-y-2 pt-1">
+          <div class="flex items-center gap-1.5">
+            <input id="qrUrlInput" type="text" oninput="onQrUrlInput(this.value)" placeholder="https://your-telemetry-app.vercel.app" class="flex-1 px-3 py-2 rounded-lg bg-slate-950 border border-slate-700 text-xs mono text-cyan-300 focus:outline-none focus:border-cyan-400">
+            <button id="qrCopyBtn" onclick="copyShareUrl()" class="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 active:scale-95 text-white text-xs font-bold border border-slate-600 shrink-0 transition">
+              📋 コピー
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- トップナビゲーションバー -->
+  <header id="topBar" class="sticky top-0 z-30 bg-[#090c13]/95 backdrop-blur-md border-b border-slate-800/90 px-3 sm:px-6 py-2.5">
+    <div class="max-w-[1600px] mx-auto flex flex-wrap items-center justify-between gap-2">
+      <!-- 左側：車種選択サイドバナー起動ボタン ＋ 現在の車両名 -->
+      <div class="flex items-center gap-3">
+        <button onclick="toggleDrawer(true)" class="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-800/90 hover:bg-slate-700 border border-slate-700 text-white text-xs sm:text-sm font-bold shadow-sm active:scale-95 transition">
+          <span class="text-base">☰</span>
+          <span>車種選択</span>
+        </button>
+
+        <div>
+          <div class="flex items-center gap-2">
+            <span id="brandLabel" class="text-[11px] font-extrabold tracking-widest accent-text uppercase">MASERATI</span>
+            <span id="driveBadge" class="text-[10px] mono font-bold px-2 py-0.5 rounded bg-slate-800 text-sky-300 border border-slate-700">Q4 AWD</span>
+          </div>
+          <h1 id="modelLabel" class="text-base sm:text-xl font-black text-white tracking-tight leading-none mt-0.5">
+            Grecale
+          </h1>
+        </div>
+      </div>
+
+      <!-- 中央：シフトインジケーターLEDバー -->
+      <div class="hidden xl:flex items-center gap-1.5 bg-black/60 px-4 py-2 rounded-full border border-slate-800">
+        <div class="shift-led w-5 h-2.5 rounded-full bg-slate-800" data-led="1"></div>
+        <div class="shift-led w-5 h-2.5 rounded-full bg-slate-800" data-led="2"></div>
+        <div class="shift-led w-5 h-2.5 rounded-full bg-slate-800" data-led="3"></div>
+        <div class="shift-led w-5 h-2.5 rounded-full bg-slate-800" data-led="4"></div>
+        <div class="shift-led w-5 h-2.5 rounded-full bg-slate-800" data-led="5"></div>
+        <div class="shift-led w-5 h-2.5 rounded-full bg-slate-800" data-led="6"></div>
+        <div class="shift-led w-5 h-2.5 rounded-full bg-slate-800" data-led="7"></div>
+        <div class="shift-led w-5 h-2.5 rounded-full bg-slate-800" data-led="8"></div>
+        <div class="shift-led w-5 h-2.5 rounded-full bg-slate-800" data-led="9"></div>
+        <div class="shift-led w-5 h-2.5 rounded-full bg-slate-800" data-led="10"></div>
+      </div>
+
+      <!-- 右側：Arduino接続監視ボタン・データソース表示・MQTTステータス -->
+      <div class="flex items-center gap-2 sm:gap-2.5">
+        <!-- ヘッダー埋め込みミニQRコード（クリックで大型ポップアップ） -->
+        <button onclick="toggleQrModal(true)" class="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-bold bg-white hover:bg-slate-100 text-slate-950 border border-slate-300 active:scale-95 transition shadow-sm" title="クリックでスマホ読み取り用QRコードを拡大表示">
+          <div id="headerMiniQr" class="w-6 h-6 bg-white flex items-center justify-center overflow-hidden rounded-sm shrink-0"></div>
+          <span class="hidden md:inline font-extrabold tracking-tight">スマホQR</span>
+        </button>
+
+        <!-- ワンクリック Arduino実機ダミーデモ受信チェックボタン -->
+        <button id="topDummyCheckBtn" onclick="toggleArduinoDummyCheck()" class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-600 active:scale-95 transition shadow-sm" title="Arduino R4 WiFiからダミー走行データを送信させてブラウザの挙動を確認します">
+          <span id="topDummyDot" class="w-2 h-2 rounded-full bg-slate-400"></span>
+          <span id="topDummyLabel">🧪 R4ダミー検証</span>
+        </button>
+
+        <!-- ポップアップ監視モニター起動ボタン -->
+        <button onclick="toggleMonitorModal(true)" class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-cyan-700/60 active:scale-95 transition shadow-sm">
+          <span id="topArdDot" class="w-2 h-2 rounded-full bg-rose-500"></span>
+          <span>📡 ARDUINO監視</span>
+          <span id="topHzBadge" class="mono text-[10px] px-1.5 py-0.2 rounded bg-black/50 text-slate-300">0.0Hz</span>
+        </button>
+
+        <!-- データソース表示ピル（REAL ECU / ARDUINO SIM / STANDBY） -->
+        <div class="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-xs mono">
+          <span id="ecuDot" class="w-2 h-2 rounded-full bg-amber-500"></span>
+          <span id="ecuStatusText" class="text-slate-300 font-bold">WAITING ARDUINO</span>
+        </div>
+
+        <!-- MQTT接続ステータス -->
+        <div id="mqttPill" class="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-xs mono">
+          <span id="mqttDot" class="w-2 h-2 rounded-full bg-slate-500"></span>
+          <span id="mqttStatusText" class="text-slate-400 font-bold">CONNECTING</span>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- メインテレメトリーグリッド -->
+  <main class="flex-1 max-w-[1600px] w-full mx-auto p-3 sm:p-5 grid grid-cols-1 lg:grid-cols-12 gap-4">
+
+    <!-- 左カラム（4列）：タコメーター・車速・ギア・ブースト圧・ペダル操作 -->
+    <section class="lg:col-span-4 flex flex-col gap-4">
+      <!-- メインスピード＆ギア＆RPMカード -->
+      <div class="panel rounded-2xl p-5 relative overflow-hidden">
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-xs font-bold text-slate-400 tracking-wider uppercase">ENGINE & SPEED</span>
+          <span id="rpmScaleInfo" class="text-[11px] mono text-slate-400">MAX: 7,500 rpm</span>
+        </div>
+
+        <div class="grid grid-cols-12 items-center gap-2 my-2">
+          <!-- 車速 -->
+          <div class="col-span-7">
+            <div class="flex items-baseline gap-1.5">
+              <span id="valSpeed" class="mono text-6xl sm:text-7xl font-black text-white tracking-tighter">0</span>
+              <span class="text-sm font-bold text-slate-400">km/h</span>
+            </div>
+            <p id="peakSpeedLbl" class="mono text-xs text-slate-400 mt-1">PEAK: 0 km/h</p>
+          </div>
+
+          <!-- ギアポジション -->
+          <div class="col-span-5 flex flex-col items-end">
+            <div class="w-20 h-24 rounded-2xl bg-slate-950 border-2 accent-border flex flex-col items-center justify-center shadow-inner">
+              <span class="text-[10px] font-bold text-slate-500 uppercase">GEAR</span>
+              <span id="valGear" class="mono text-5xl font-black accent-text leading-none mt-0.5">N</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- エンジン回転数バー -->
+        <div class="mt-4 pt-4 border-t border-slate-800/80">
+          <div class="flex justify-between items-baseline mb-1.5">
+            <span class="text-xs font-bold text-slate-400">ENGINE RPM</span>
+            <span id="valRpm" class="mono text-2xl font-extrabold text-white">0 <span class="text-xs font-normal text-slate-400">rpm</span></span>
+          </div>
+          <div class="w-full h-4 bg-slate-950 rounded-full overflow-hidden p-0.5 border border-slate-800">
+            <div id="barRpm" class="h-full rounded-full bg-gradient-to-r from-emerald-400 via-amber-400 to-rose-600 transition-all duration-75" style="width: 0%"></div>
+          </div>
+        </div>
+
+        <!-- ブースト圧ゲージ -->
+        <div class="mt-4 pt-4 border-t border-slate-800/80">
+          <div class="flex justify-between items-baseline mb-1.5">
+            <span class="text-xs font-bold text-slate-400">TURBO BOOST PRESSURE</span>
+            <span id="valBoost" class="mono text-xl font-extrabold text-sky-400">+0.00 <span class="text-xs font-normal text-slate-400">bar</span></span>
+          </div>
+          <div class="w-full h-3 bg-slate-950 rounded-full overflow-hidden border border-slate-800">
+            <div id="barBoost" class="h-full rounded-full bg-gradient-to-r from-sky-500 to-cyan-300 transition-all duration-75" style="width: 15%"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ドライバー操作インジケーター（アクセル・スロットル・ブレーキ） -->
+      <div class="panel rounded-2xl p-5 flex-1 flex flex-col justify-between">
+        <div class="flex items-center justify-between mb-3">
+          <span class="text-xs font-bold text-slate-400 tracking-wider uppercase">DRIVER INPUTS</span>
+          <span id="valSteer" class="mono text-xs font-bold text-slate-300">STEER: 0.0°</span>
+        </div>
+
+        <div class="space-y-3.5">
+          <!-- アクセルペダル開度 -->
+          <div>
+            <div class="flex justify-between text-xs font-bold mb-1">
+              <span class="text-emerald-400">ACCELERATOR PEDAL</span>
+              <span id="valPedal" class="mono text-white">0.0%</span>
+            </div>
+            <div class="w-full h-3 bg-slate-950 rounded-full overflow-hidden border border-slate-800">
+              <div id="barPedal" class="h-full bg-emerald-500 transition-all duration-75" style="width: 0%"></div>
+            </div>
+          </div>
+
+          <!-- スロットルバルブ開度 -->
+          <div>
+            <div class="flex justify-between text-xs font-bold mb-1">
+              <span class="text-sky-400">THROTTLE VALVE</span>
+              <span id="valThrottle" class="mono text-white">0.0%</span>
+            </div>
+            <div class="w-full h-3 bg-slate-950 rounded-full overflow-hidden border border-slate-800">
+              <div id="barThrottle" class="h-full bg-sky-400 transition-all duration-75" style="width: 0%"></div>
+            </div>
+          </div>
+
+          <!-- ブレーキ油圧・踏力 -->
+          <div>
+            <div class="flex justify-between text-xs font-bold mb-1">
+              <span class="text-rose-400">BRAKE PRESSURE</span>
+              <span id="valBrake" class="mono text-white">0.0%</span>
+            </div>
+            <div class="w-full h-3 bg-slate-950 rounded-full overflow-hidden border border-slate-800">
+              <div id="barBrake" class="h-full bg-rose-500 transition-all duration-75" style="width: 0%"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 中央カラム（4列）：駆動配分＆4輪シャシービジュアライザー -->
+    <section class="lg:col-span-4 panel rounded-2xl p-5 flex flex-col justify-between">
+      <div>
+        <div class="flex items-center justify-between mb-1">
+          <span class="text-xs font-bold text-slate-400 tracking-wider uppercase">DRIVETRAIN & TORQUE VECTORING</span>
+          <span id="diffModeLbl" class="text-[11px] mono font-bold text-amber-400">Q4 ACTIVE AWD</span>
+        </div>
+        <p class="text-xs text-slate-400">前後駆動トルク配分・リア左右e-LSD・4輪ホイールスピード</p>
+      </div>
+
+      <!-- 前後トルク配分比率バー -->
+      <div class="my-3 bg-slate-950/90 p-3.5 rounded-xl border border-slate-800">
+        <div class="flex justify-between items-center text-xs font-extrabold mono mb-1.5">
+          <span class="text-sky-400">FRONT <span id="valFrontPct">25%</span></span>
+          <span class="text-slate-500">TORQUE SPLIT</span>
+          <span class="text-rose-400"><span id="valRearPct">75%</span> REAR</span>
+        </div>
+        <div class="w-full h-3.5 rounded-full bg-rose-600/80 overflow-hidden flex">
+          <div id="barFrontSplit" class="h-full bg-sky-400 transition-all duration-100" style="width: 25%"></div>
+        </div>
+      </div>
+
+      <!-- シャシー＆4輪ビジュアライザー Canvas -->
+      <div class="relative flex-1 min-h-[260px] flex items-center justify-center my-1">
+        <canvas id="chassisCanvas" class="w-full h-full max-h-[300px]"></canvas>
+      </div>
+
+      <!-- リア左右トルクベクタリングバー -->
+      <div class="bg-slate-950/90 p-3 rounded-xl border border-slate-800">
+        <div class="flex justify-between text-[11px] font-bold mono text-slate-400 mb-1">
+          <span>REAR LEFT: <strong id="valLsdL" class="text-white">50%</strong></span>
+          <span>e-LSD VECTORING</span>
+          <span>REAR RIGHT: <strong id="valLsdR" class="text-white">50%</strong></span>
+        </div>
+        <div class="w-full h-2.5 rounded-full bg-slate-800 overflow-hidden flex">
+          <div id="barLsdL" class="h-full bg-amber-400 transition-all duration-100" style="width: 50%"></div>
+          <div id="barLsdR" class="h-full bg-orange-500 transition-all duration-100" style="width: 50%"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 右カラム（4列）：Gフォース摩擦円・GPSコース軌跡・熱マネジメント＆燃焼詳細 -->
+    <section class="lg:col-span-4 flex flex-col gap-4">
+      <!-- Gフォース＆コースマップ 2分割 -->
+      <div class="grid grid-cols-2 gap-3">
+        <!-- Gフォース（摩擦円） -->
+        <div class="panel rounded-2xl p-4 flex flex-col items-center">
+          <div class="w-full flex justify-between items-center mb-1">
+            <span class="text-[11px] font-bold text-slate-400">G-FORCE</span>
+            <span id="maxGLbl" class="mono text-[10px] text-rose-400 font-bold">MAX: 0.00G</span>
+          </div>
+          <canvas id="gForceCanvas" width="160" height="160" class="w-36 h-36 my-1"></canvas>
+          <div class="w-full flex justify-between mono text-[11px] text-slate-300 mt-1">
+            <span id="valLatG">LAT: 0.00G</span>
+            <span id="valLonG">LON: 0.00G</span>
+          </div>
+        </div>
+
+        <!-- GPSコースライン -->
+        <div class="panel rounded-2xl p-4 flex flex-col items-center">
+          <div class="w-full flex justify-between items-center mb-1">
+            <span class="text-[11px] font-bold text-slate-400">TRACK GPS</span>
+            <span id="gpsFixLbl" class="mono text-[10px] text-emerald-400 font-bold">M10 GNSS</span>
+          </div>
+          <canvas id="trackCanvas" width="160" height="160" class="w-36 h-36 my-1"></canvas>
+          <div class="w-full text-center mono text-[10px] text-slate-400 mt-1 truncate" id="valCoords">
+            35.3712, 138.9268
+          </div>
+        </div>
+      </div>
+
+      <!-- パワートレイン熱マネジメント＆詳細テレメトリー数値群 -->
+      <div class="panel rounded-2xl p-5 flex-1 flex flex-col justify-between">
+        <div class="flex items-center justify-between mb-3">
+          <span class="text-xs font-bold text-slate-400 tracking-wider uppercase">THERMAL & ENGINE DIAGNOSTICS</span>
+          <span class="text-[10px] mono text-slate-500">OBD-II + UDS 0x22</span>
+        </div>
+
+        <div class="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+          <!-- エンジン油温 -->
+          <div class="bg-slate-950/90 p-3 rounded-xl border border-slate-800">
+            <p class="text-[11px] text-slate-400 font-semibold">エンジン油温</p>
+            <p id="valOilTemp" class="mono text-xl font-extrabold text-amber-400 mt-0.5">--.- <span class="text-xs font-normal">°C</span></p>
+          </div>
+
+          <!-- ミッション油温 -->
+          <div class="bg-slate-950/90 p-3 rounded-xl border border-slate-800">
+            <p class="text-[11px] text-slate-400 font-semibold">ミッション油温</p>
+            <p id="valTransTemp" class="mono text-xl font-extrabold text-sky-400 mt-0.5">--.- <span class="text-xs font-normal">°C</span></p>
+          </div>
+
+          <!-- 冷却水温 -->
+          <div class="bg-slate-950/90 p-3 rounded-xl border border-slate-800">
+            <p class="text-[11px] text-slate-400 font-semibold">冷却水温</p>
+            <p id="valWaterTemp" class="mono text-xl font-extrabold text-emerald-400 mt-0.5">--.- <span class="text-xs font-normal">°C</span></p>
+          </div>
+
+          <!-- 吸気温度 IAT -->
+          <div class="bg-slate-950/90 p-3 rounded-xl border border-slate-800">
+            <p class="text-[11px] text-slate-400 font-semibold">吸気温度 (IAT)</p>
+            <p id="valIat" class="mono text-lg font-bold text-white mt-0.5">--.- <span class="text-xs font-normal text-slate-400">°C</span></p>
+          </div>
+
+          <!-- エンジン負荷 -->
+          <div class="bg-slate-950/90 p-3 rounded-xl border border-slate-800">
+            <p class="text-[11px] text-slate-400 font-semibold">エンジン負荷率</p>
+            <p id="valLoad" class="mono text-lg font-bold text-white mt-0.5">--.- <span class="text-xs font-normal text-slate-400">%</span></p>
+          </div>
+
+          <!-- 点火時期進角 -->
+          <div class="bg-slate-950/90 p-3 rounded-xl border border-slate-800">
+            <p class="text-[11px] text-slate-400 font-semibold">点火時期進角</p>
+            <p id="valIgn" class="mono text-lg font-bold text-white mt-0.5">--.- <span class="text-xs font-normal text-slate-400">°</span></p>
+          </div>
+
+          <!-- 空燃比 Lambda -->
+          <div class="bg-slate-950/90 p-3 rounded-xl border border-slate-800">
+            <p class="text-[11px] text-slate-400 font-semibold">空燃比 (Lambda)</p>
+            <p id="valAfr" class="mono text-lg font-bold text-cyan-300 mt-0.5">1.00 <span class="text-xs font-normal text-slate-400">λ</span></p>
+          </div>
+
+          <!-- バッテリー電圧 -->
+          <div class="bg-slate-950/90 p-3 rounded-xl border border-slate-800">
+            <p class="text-[11px] text-slate-400 font-semibold">車両電圧</p>
+            <p id="valBat" class="mono text-lg font-bold text-white mt-0.5">14.1 <span class="text-xs font-normal text-slate-400">V</span></p>
+          </div>
+
+          <!-- アクティブプロファイル -->
+          <div class="bg-slate-950/90 p-3 rounded-xl border border-slate-800">
+            <p class="text-[11px] text-slate-400 font-semibold">駆動方式</p>
+            <p id="valDriveShort" class="mono text-sm font-extrabold accent-text mt-1">AWD Q4</p>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    // ================= 1. 車種別プロファイル定義 =================
+    const VEHICLE_PROFILES = {
+      GRECALE: {
+        brand: "MASERATI",
+        name: "Grecale",
+        driveBadge: "Q4 AWD",
+        driveShort: "AWD Q4",
+        diffLabel: "Q4 ACTIVE AWD (0:100 - 50:50)",
+        maxRpm: 7500,
+        redline: 6800,
+        maxBoost: 1.85,
+        isRwdOnly: false,
+        defaultFront: 25,
+        isDebug: false
+      },
+      GRANTURISMO: {
+        brand: "MASERATI",
+        name: "GranTurismo",
+        driveBadge: "Q4 AWD",
+        driveShort: "AWD Q4",
+        diffLabel: "Q4 REAR-BIASED AWD + e-LSD",
+        maxRpm: 8000,
+        redline: 7500,
+        maxBoost: 2.00,
+        isRwdOnly: false,
+        defaultFront: 20,
+        isDebug: false
+      },
+      GRANCABRIO: {
+        brand: "MASERATI",
+        name: "GranCabrio",
+        driveBadge: "Q4 AWD",
+        driveShort: "AWD Q4",
+        diffLabel: "Q4 REAR-BIASED AWD + e-LSD",
+        maxRpm: 8000,
+        redline: 7500,
+        maxBoost: 2.00,
+        isRwdOnly: false,
+        defaultFront: 20,
+        isDebug: false
+      },
+      MCPURA: {
+        brand: "MASERATI",
+        name: "MCPURA",
+        driveBadge: "MR / RWD",
+        driveShort: "RWD e-LSD",
+        diffLabel: "MID-ENGINE RWD + E-DIFF",
+        maxRpm: 8200,
+        redline: 7500,
+        maxBoost: 2.10,
+        isRwdOnly: true,
+        defaultFront: 0,
+        isDebug: false
+      },
+      GT2_STRADALE: {
+        brand: "MASERATI",
+        name: "GT2 Stradale",
+        driveBadge: "TRACK RWD",
+        driveShort: "RWD TRACK",
+        diffLabel: "GT2 RACING E-LSD + CORSA",
+        maxRpm: 8500,
+        redline: 7800,
+        maxBoost: 2.25,
+        isRwdOnly: true,
+        defaultFront: 0,
+        isDebug: false
+      },
+      DEBUG_RS5: {
+        brand: "DEBUG // AUDI SPORT",
+        name: "2019 RS5 Sportback",
+        driveBadge: "quattro AWD",
+        driveShort: "quattro 40:60",
+        diffLabel: "SELF-LOCKING CENTER DIFF (40:60)",
+        maxRpm: 7200,
+        redline: 6700,
+        maxBoost: 1.65,
+        isRwdOnly: false,
+        defaultFront: 40,
+        isDebug: true
+      }
+    };
+
+    // ================= 2. グローバル状態変数（TDZ回避のため先頭宣言） =================
+    let currentModel = "GRECALE";
+    let peakSpeed = 0;
+    let maxTotalG = 0;
+    let localDemoTimer = null;
+    let demoPhase = 0;
+    let client = null;
+    const trackPoints = [];
+
+    // Arduino 接続診断・監視メトリクス
+    let lastArduinoRxTime = 0;
+    let totalPacketsRx = 0;
+    const rxTimestamps = [];
+    let lastPingSentAt = 0;
+    let lastRttMs = null;
+    let arduinoDummyCheckRequested = false;
+    let latestArduinoMeta = {
+      can_ok: 0,
+      sim: 0,
+      rssi: null,
+      up: 0,
+      ip: "--.--.--.--",
+      mdl: "UNSYNCED"
+    };
+
+    const TOPIC_DATA = "maserati_circuit_test_9981/telemetry";
+    const TOPIC_CMD  = "maserati_circuit_test_9981/cmd";
+
+    // ================= 3. ログ出力＆UIトグル =================
+    function appendLog(msg) {
+      const box = document.getElementById("sysLog");
+      if (!box) return;
+      const line = document.createElement("div");
+      const now = new Date().toTimeString().split(" ")[0];
+      line.textContent = `[${now}] ${msg}`;
+      box.appendChild(line);
+      box.scrollTop = box.scrollHeight;
+    }
+
+    function toggleDrawer(open) {
+      document.getElementById("sideDrawer").classList.toggle("open", open);
+      document.getElementById("drawerBackdrop").classList.toggle("open", open);
+    }
+
+    function toggleMonitorModal(open) {
+      const modal = document.getElementById("arduinoMonitorModal");
+      if (!modal) return;
+      if (open) {
+        modal.classList.remove("hidden-modal");
+        modal.classList.add("open-modal");
+      } else {
+        modal.classList.remove("open-modal");
+        modal.classList.add("hidden-modal");
+      }
+    }
+
+    function toggleQrModal(open) {
+      const modal = document.getElementById("qrShareModal");
+      if (!modal) return;
+      if (open) {
+        const prof = VEHICLE_PROFILES[currentModel];
+        const vLbl = document.getElementById("qrVehicleName");
+        if (vLbl && prof) vLbl.textContent = prof.name;
+        renderQrCodes();
+        modal.classList.remove("hidden-modal");
+        modal.classList.add("open-modal");
+      } else {
+        modal.classList.remove("open-modal");
+        modal.classList.add("hidden-modal");
+      }
+    }
+
+    function getShareUrl() {
+      const input = document.getElementById("qrUrlInput");
+      if (input && input.value.trim()) {
+        return input.value.trim();
+      }
+      const saved = localStorage.getItem("telemetry_share_url");
+      const href = window.location.href;
+      const isHttp = href.startsWith("http://") || href.startsWith("https://");
+      const notice = document.getElementById("qrLocalFileNotice");
+      if (notice) {
+        notice.classList.toggle("hidden", isHttp);
+      }
+      const resolved = isHttp ? href : (saved || "https://maserati-circuit-live.vercel.app");
+      if (input) input.value = resolved;
+      return resolved;
+    }
+
+    function renderQrCodes(overrideUrl) {
+      const url = overrideUrl || getShareUrl();
+      const bigBox = document.getElementById("qrBigContainer");
+      const miniBox = document.getElementById("headerMiniQr");
+
+      if (typeof window.QRCode !== "undefined") {
+        if (bigBox) {
+          bigBox.innerHTML = "";
+          new window.QRCode(bigBox, {
+            text: url,
+            width: 260,
+            height: 260,
+            colorDark: "#07090e",
+            colorLight: "#ffffff",
+            correctLevel: window.QRCode.CorrectLevel.M
+          });
+        }
+        if (miniBox) {
+          miniBox.innerHTML = "";
+          new window.QRCode(miniBox, {
+            text: url,
+            width: 24,
+            height: 24,
+            colorDark: "#07090e",
+            colorLight: "#ffffff",
+            correctLevel: window.QRCode.CorrectLevel.L
+          });
+        }
+      } else {
+        // CDN読み込み前のフォールバックSVGアイコン
+        const fallbackSvg = `<svg viewBox="0 0 24 24" class="w-full h-full fill-slate-900"><path d="M3 3h8v8H3V3zm2 2v4h4V5H5zm8-2h8v8h-8V3zm2 2v4h4V5h-4zM3 13h8v8H3v-8zm2 2v4h4v-4H5zm13-2h3v2h-3v-2zm-5 0h2v3h-2v-3zm3 3h3v2h-3v-2zm-3 3h2v2h-2v-2zm3 0h5v2h-5v-2zm2-6h3v3h-3v-3z"/></svg>`;
+        if (miniBox) miniBox.innerHTML = fallbackSvg;
+        if (bigBox) {
+          bigBox.innerHTML = `<img src="https://api.qrserver.com/v1/create-qr-code/?size=260x260&data=${encodeURIComponent(url)}" alt="QR Code" class="w-[260px] h-[260px]" onerror="this.parentElement.innerHTML='<p class=\\'text-xs text-slate-600\\'>URL: ${url}</p>'">`;
+        }
+      }
+    }
+
+    function onQrUrlInput(val) {
+      const trimmed = val.trim();
+      if (!trimmed) return;
+      localStorage.setItem("telemetry_share_url", trimmed);
+      renderQrCodes(trimmed);
+    }
+
+    function copyShareUrl() {
+      const input = document.getElementById("qrUrlInput");
+      const btn = document.getElementById("qrCopyBtn");
+      if (!input) return;
+      input.select();
+      input.setSelectionRange(0, 99999);
+      try {
+        document.execCommand("copy");
+        if (btn) {
+          btn.textContent = "✓ コピー完了";
+          btn.classList.add("bg-emerald-600", "border-emerald-400");
+          setTimeout(() => {
+            btn.textContent = "📋 コピー";
+            btn.classList.remove("bg-emerald-600", "border-emerald-400");
+          }, 1800);
+        }
+      } catch (e) {
+        appendLog("[WARN] Clipboard copy failed.");
+      }
+    }
+
+    function loadQrScriptAsync() {
+      const s = document.createElement("script");
+      s.src = "https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js";
+      s.async = true;
+      s.onload = () => renderQrCodes();
+      s.onerror = () => renderQrCodes();
+      document.head.appendChild(s);
+    }
+
+    // ================= 10. 初期起動処理 =================
+    window.addEventListener("DOMContentLoaded", () => {
+      selectVehicle("GRECALE", true);
+      drawGForce(0, 0);
+      renderQrCodes();
+      loadQrScriptAsync();
+      loadMqttScriptAsync();
+      setInterval(updateMonitorWatchdog, 250);
+    });
+
+    window.addEventListener("resize", () => {
+      const prof = VEHICLE_PROFILES[currentModel];
+      drawChassis({}, prof, prof.defaultFront, 100 - prof.defaultFront);
+    });
+  </script>
+</body>
+</html>
