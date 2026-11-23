@@ -404,14 +404,14 @@
         </p>
 
         <!-- ローカルHTML（file://）警告ガイド -->
-        <div id="qrLocalFileNotice" class="hidden w-full p-3 rounded-xl bg-amber-950/60 border border-amber-600/50 text-left text-[11px] text-amber-200 leading-relaxed">
-          ⚠ 現在PCのローカルファイル（<span class="mono">file://</span>）で開いています。スマホで開くには、Vercel / GitHub Pages の公開URL、または同一Wi-Fi内のPCローカルサーバーURLを下記へ入力してください。
+        <div id="qrLocalFileNotice" class="hidden w-full p-3 rounded-xl bg-cyan-950/60 border border-cyan-600/50 text-left text-[11px] text-cyan-200 leading-relaxed">
+          ℹ 現在PCローカルファイルで開いていますが、QRコードは公開済みの本番URL（<span class="mono">https://daisonfamily.github.io/maserati-telemetry-data/</span>）へ自動設定されています。
         </div>
 
         <!-- URL確認・編集・コピーバー -->
         <div class="w-full space-y-2 pt-1">
           <div class="flex items-center gap-1.5">
-            <input id="qrUrlInput" type="text" oninput="onQrUrlInput(this.value)" placeholder="https://your-telemetry-app.vercel.app" class="flex-1 px-3 py-2 rounded-lg bg-slate-950 border border-slate-700 text-xs mono text-cyan-300 focus:outline-none focus:border-cyan-400">
+            <input id="qrUrlInput" type="text" oninput="onQrUrlInput(this.value)" placeholder="https://daisonfamily.github.io/maserati-telemetry-data/" class="flex-1 px-3 py-2 rounded-lg bg-slate-950 border border-slate-700 text-xs mono text-cyan-300 focus:outline-none focus:border-cyan-400">
             <button id="qrCopyBtn" onclick="copyShareUrl()" class="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 active:scale-95 text-white text-xs font-bold border border-slate-600 shrink-0 transition">
               📋 コピー
             </button>
@@ -458,6 +458,12 @@
 
       <!-- 右側：Arduino接続監視ボタン・データソース表示・MQTTステータス -->
       <div class="flex items-center gap-2 sm:gap-2.5">
+        <!-- 実行環境バッジ（LOCAL FILE / GITHUB LIVE 自動判別） -->
+        <div id="envHostPill" class="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-[11px] mono" title="ローカルHTMLでもGitHub公開サイトでも同じMQTTクラウド経由で同時受信します">
+          <span id="envHostDot" class="w-2 h-2 rounded-full bg-indigo-400"></span>
+          <span id="envHostText" class="text-indigo-300 font-bold">UNIVERSAL</span>
+        </div>
+
         <!-- ヘッダー埋め込みミニQRコード（クリックで大型ポップアップ） -->
         <button onclick="toggleQrModal(true)" class="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-bold bg-white hover:bg-slate-100 text-slate-950 border border-slate-300 active:scale-95 transition shadow-sm" title="クリックでスマホ読み取り用QRコードを拡大表示">
           <div id="headerMiniQr" class="w-6 h-6 bg-white flex items-center justify-center overflow-hidden rounded-sm shrink-0"></div>
@@ -812,6 +818,7 @@
 
     // ================= 2. グローバル状態変数（TDZ回避のため先頭宣言） =================
     let currentModel = "GRECALE";
+    let lastModelCmdAt = 0;
     let peakSpeed = 0;
     let maxTotalG = 0;
     let localDemoTimer = null;
@@ -894,7 +901,7 @@
       if (notice) {
         notice.classList.toggle("hidden", isHttp);
       }
-      const resolved = isHttp ? href : (saved || "https://maserati-circuit-live.vercel.app");
+      const resolved = isHttp ? href : (saved || "https://daisonfamily.github.io/maserati-telemetry-data/");
       if (input) input.value = resolved;
       return resolved;
     }
@@ -974,9 +981,829 @@
       document.head.appendChild(s);
     }
 
+    // ================= 4. 車種プロファイル切替 & リモートコマンド =================
+    function selectVehicle(modelKey, silent = false) {
+      const prof = VEHICLE_PROFILES[modelKey] || VEHICLE_PROFILES.GRECALE;
+      currentModel = modelKey;
+
+      document.body.classList.toggle("theme-debug", Boolean(prof.isDebug));
+
+      const brandEl = document.getElementById("brandLabel");
+      const modelEl = document.getElementById("modelLabel");
+      const badgeEl = document.getElementById("driveBadge");
+      const rpmInfoEl = document.getElementById("rpmScaleInfo");
+      const diffLblEl = document.getElementById("diffModeLbl");
+      const driveShortEl = document.getElementById("valDriveShort");
+      const qrVehEl = document.getElementById("qrVehicleName");
+
+      if (brandEl) brandEl.textContent = prof.brand;
+      if (modelEl) modelEl.textContent = prof.name;
+      if (badgeEl) badgeEl.textContent = prof.driveBadge;
+      if (rpmInfoEl) rpmInfoEl.textContent = `MAX: ${prof.maxRpm.toLocaleString()} rpm`;
+      if (diffLblEl) diffLblEl.textContent = prof.diffLabel;
+      if (driveShortEl) driveShortEl.textContent = prof.driveShort;
+      if (qrVehEl) qrVehEl.textContent = prof.name;
+
+      document.querySelectorAll(".vehicle-btn").forEach((btn) => {
+        btn.classList.toggle("active", btn.dataset.model === modelKey);
+      });
+
+      const frontPct = prof.defaultFront;
+      const rearPct = 100 - frontPct;
+      const fEl = document.getElementById("valFrontPct");
+      const rEl = document.getElementById("valRearPct");
+      const bEl = document.getElementById("barFrontSplit");
+      if (fEl) fEl.textContent = `${frontPct}%`;
+      if (rEl) rEl.textContent = `${rearPct}%`;
+      if (bEl) bEl.style.width = `${frontPct}%`;
+
+      drawChassis({}, prof, frontPct, rearPct);
+
+      if (!silent) {
+        lastModelCmdAt = Date.now();
+        appendLog(`[MODEL] Profile switched -> ${prof.name} (${modelKey})`);
+        sendRemoteCommand("set_vehicle", modelKey);
+      }
+    }
+
+    function sendRemoteCommand(cmd, val) {
+      const payload = JSON.stringify({ cmd, val: String(val) });
+      const fb = document.getElementById("modalCmdFeedback");
+      if (client && client.connected) {
+        client.publish(TOPIC_CMD, payload);
+        appendLog(`[CMD TX] ${payload}`);
+        if (fb) fb.textContent = `Sent: ${cmd}=${val}`;
+      } else {
+        appendLog(`[WARN] MQTT offline, command queued locally: ${payload}`);
+        if (fb) fb.textContent = `Offline (Queued): ${cmd}=${val}`;
+      }
+    }
+
+    function setArduinoSim(enable) {
+      arduinoDummyCheckRequested = Boolean(enable);
+      sendRemoteCommand("set_vehicle", currentModel);
+      sendRemoteCommand("set_sim", enable ? "1" : "0");
+      updateDummyButtonVisuals(enable);
+    }
+
+    function toggleArduinoDummyCheck() {
+      const next = !arduinoDummyCheckRequested;
+      setArduinoSim(next);
+      if (next) {
+        sendPingTest();
+      }
+    }
+
+    function updateDummyButtonVisuals(isActive) {
+      const btn = document.getElementById("topDummyCheckBtn");
+      const dot = document.getElementById("topDummyDot");
+      const lbl = document.getElementById("topDummyLabel");
+      if (!btn || !dot || !lbl) return;
+
+      if (isActive) {
+        btn.className = "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-cyan-950 hover:bg-cyan-900 text-cyan-200 border border-cyan-500 active:scale-95 transition shadow-sm";
+        dot.className = "w-2 h-2 rounded-full bg-cyan-400 animate-pulse";
+        lbl.textContent = "🧪 R4ダミー受信中";
+      } else {
+        btn.className = "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-600 active:scale-95 transition shadow-sm";
+        dot.className = "w-2 h-2 rounded-full bg-slate-400";
+        lbl.textContent = "🧪 R4ダミー検証";
+      }
+    }
+
+    function sendPingTest() {
+      lastPingSentAt = performance.now();
+      sendRemoteCommand("ping", String(Date.now()));
+    }
+
+    function resetPeaks() {
+      peakSpeed = 0;
+      maxTotalG = 0;
+      trackPoints.length = 0;
+      const ps = document.getElementById("peakSpeedLbl");
+      const mg = document.getElementById("maxGLbl");
+      if (ps) ps.textContent = "PEAK: 0 km/h";
+      if (mg) mg.textContent = "MAX: 0.00G";
+      appendLog("[SYS] Session peak speed, Max G, and track trace reset.");
+    }
+
+    // ================= 5. ブラウザ単体ローカルデモモード =================
+    function toggleLocalDemoMode() {
+      const btn = document.getElementById("demoToggleBtn");
+      if (localDemoTimer) {
+        clearInterval(localDemoTimer);
+        localDemoTimer = null;
+        if (btn) {
+          btn.textContent = "OFF";
+          btn.className = "px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-800 text-slate-300 border border-slate-700";
+        }
+        appendLog("[DEMO] Browser local preview stopped.");
+        return;
+      }
+
+      if (btn) {
+        btn.textContent = "ON";
+        btn.className = "px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-600 text-white border border-emerald-400";
+      }
+      appendLog("[DEMO] Browser local preview started.");
+
+      localDemoTimer = setInterval(() => {
+        // Arduino実機パケットを受信中の場合はそちらを優先
+        if (Date.now() - lastArduinoRxTime < 2000) return;
+
+        demoPhase += 0.09;
+        const prof = VEHICLE_PROFILES[currentModel] || VEHICLE_PROFILES.GRECALE;
+        const straight = Math.sin(demoPhase * 0.45);
+        const corner = Math.cos(demoPhase * 0.9);
+
+        const spd = Math.max(55, Math.min(295, Math.round(168 + straight * 118)));
+        const gear = spd < 85 ? 2 : spd < 128 ? 3 : spd < 175 ? 4 : spd < 225 ? 5 : 6;
+        const rpm = Math.max(1200, Math.min(prof.maxRpm, Math.round(3200 + ((spd % 52) / 52) * (prof.redline - 3000))));
+        const ped = straight > -0.15 ? Math.min(100, Math.max(0, 65 + straight * 40)) : 0;
+        const brk = straight <= -0.15 ? Math.min(100, Math.abs(straight + 0.15) * 115) : 0;
+        const thr = ped * 0.96;
+        const bst = ped > 10 ? (ped / 100) * prof.maxBoost : -0.55;
+        const awdF = prof.isRwdOnly ? 0 : (brk > 10 ? 0 : Math.max(10, Math.min(50, Math.round(prof.defaultFront + (ped / 100) * 12 - Math.abs(corner) * 8))));
+        const lsdL = Math.max(20, Math.min(80, Math.round(50 + corner * 22)));
+
+        updateDashboard({
+          rpm, spd, gear, bst,
+          lod: 24 + ped * 0.74,
+          ped, thr, brk,
+          oil: 103.5 + Math.sin(demoPhase * 0.04) * 3.5,
+          tra: 91.5 + Math.cos(demoPhase * 0.04) * 2.5,
+          wat: 90.8 + Math.sin(demoPhase * 0.03) * 1.8,
+          iat: 33.5 + Math.sin(demoPhase * 0.05) * 2.2,
+          ign: 18.5 - (bst > 0 ? bst * 5.5 : 0),
+          afr: ped > 70 ? 0.84 : 1.00,
+          bat: 14.2,
+          str: corner * 42,
+          awd_f: awdF,
+          lsd_l: lsdL,
+          lsd_r: 100 - lsdL,
+          ws_fl: spd, ws_fr: spd, ws_rl: spd, ws_rr: spd,
+          gx: corner * 1.22,
+          gy: brk > 0 ? -brk / 75 : ped / 135,
+          lat: 35.3712 + Math.sin(demoPhase * 0.22) * 0.0045,
+          lng: 138.9268 + Math.cos(demoPhase * 0.22) * 0.0075
+        }, "LOCAL_DEMO");
+      }, 150);
+    }
+
+    // ================= 6. Arduino短縮JSON正規化 & 画面更新 =================
+    function normalizeArduinoPacket(raw) {
+      const canOk = raw.c !== undefined ? Number(raw.c) : Number(raw.can_ok || 0);
+      const sim = raw.s !== undefined ? Number(raw.s) : Number(raw.sim || 0);
+
+      latestArduinoMeta.can_ok = canOk;
+      latestArduinoMeta.sim = sim;
+      if (raw.rs !== undefined) latestArduinoMeta.rssi = Number(raw.rs);
+      if (raw.u !== undefined) latestArduinoMeta.up = Number(raw.u);
+      if (raw.ip !== undefined) latestArduinoMeta.ip = String(raw.ip);
+      if (raw.m !== undefined) latestArduinoMeta.mdl = String(raw.m);
+
+      const spd = Number(raw.v !== undefined ? raw.v : (raw.spd || 0));
+      const lsdL = Number(raw.ll !== undefined ? raw.ll : (raw.lsd_l !== undefined ? raw.lsd_l : 50));
+
+      return {
+        can_ok: canOk,
+        sim,
+        mdl: raw.m ? String(raw.m) : null,
+        rpm: Number(raw.r !== undefined ? raw.r : (raw.rpm || 0)),
+        spd,
+        gear: Number(raw.g !== undefined ? raw.g : (raw.gear || 0)),
+        bst: Number(raw.b !== undefined ? raw.b : (raw.bst || 0)),
+        lod: Number(raw.l !== undefined ? raw.l : (raw.lod || 0)),
+        ped: Number(raw.p !== undefined ? raw.p : (raw.ped || 0)),
+        thr: Number(raw.t !== undefined ? raw.t : (raw.thr || 0)),
+        brk: Number(raw.k !== undefined ? raw.k : (raw.brk || 0)),
+        oil: Number(raw.o !== undefined ? raw.o : (raw.oil || 0)),
+        tra: Number(raw.tm !== undefined ? raw.tm : (raw.tra || 0)),
+        wat: Number(raw.w !== undefined ? raw.w : (raw.wat || 0)),
+        iat: Number(raw.ia !== undefined ? raw.ia : (raw.iat || 0)),
+        ign: Number(raw.ig !== undefined ? raw.ig : (raw.ign || 0)),
+        afr: Number(raw.af !== undefined ? raw.af : (raw.afr !== undefined ? raw.afr : 1.0)),
+        bat: Number(raw.bt !== undefined ? raw.bt : (raw.bat !== undefined ? raw.bat : 14.1)),
+        str: Number(raw.st !== undefined ? raw.st : (raw.str || 0)),
+        awd_f: Number(raw.afw !== undefined ? raw.afw : (raw.awd_f !== undefined ? raw.awd_f : 25)),
+        lsd_l: lsdL,
+        lsd_r: 100 - lsdL,
+        ws_fl: Number(raw.ws_fl !== undefined ? raw.ws_fl : spd),
+        ws_fr: Number(raw.ws_fr !== undefined ? raw.ws_fr : spd),
+        ws_rl: Number(raw.ws_rl !== undefined ? raw.ws_rl : spd),
+        ws_rr: Number(raw.ws_rr !== undefined ? raw.ws_rr : spd),
+        gx: Number(raw.gx || 0),
+        gy: Number(raw.gy || 0),
+        lat: Number(raw.la !== undefined ? raw.la : (raw.lat || 35.3712)),
+        lng: Number(raw.ln !== undefined ? raw.ln : (raw.lng || 138.9268))
+      };
+    }
+
+    function updateDashboard(d, sourceType = "REAL") {
+      const prof = VEHICLE_PROFILES[currentModel] || VEHICLE_PROFILES.GRECALE;
+
+      // データソース表示ピル更新
+      const ecuDot = document.getElementById("ecuDot");
+      const ecuTxt = document.getElementById("ecuStatusText");
+      if (ecuDot && ecuTxt) {
+        if (sourceType === "REAL") {
+          ecuDot.className = "w-2 h-2 rounded-full bg-emerald-400 animate-pulse";
+          ecuTxt.textContent = "REAL ECU LIVE";
+          ecuTxt.className = "text-emerald-400 font-bold";
+        } else if (sourceType === "ARDUINO_SIM") {
+          ecuDot.className = "w-2 h-2 rounded-full bg-cyan-400 animate-pulse";
+          ecuTxt.textContent = "ARDUINO SIM";
+          ecuTxt.className = "text-cyan-300 font-bold";
+        } else {
+          ecuDot.className = "w-2 h-2 rounded-full bg-amber-400 animate-pulse";
+          ecuTxt.textContent = "LOCAL PREVIEW";
+          ecuTxt.className = "text-amber-300 font-bold";
+        }
+      }
+
+      // 車速 & 最高速
+      const spd = Math.round(d.spd || 0);
+      if (spd > peakSpeed) peakSpeed = spd;
+      document.getElementById("valSpeed").textContent = spd;
+      document.getElementById("peakSpeedLbl").textContent = `PEAK: ${peakSpeed} km/h`;
+
+      // ギア段数
+      const g = Number(d.gear || 0);
+      document.getElementById("valGear").textContent = g < 0 ? "R" : g === 0 ? "N" : String(g);
+
+      // RPM & シフトインジケーターLED
+      const rpm = Math.round(d.rpm || 0);
+      const rpmPct = Math.min(100, Math.max(0, (rpm / prof.maxRpm) * 100));
+      document.getElementById("valRpm").innerHTML = `${rpm.toLocaleString()} <span class="text-xs font-normal text-slate-400">rpm</span>`;
+      document.getElementById("barRpm").style.width = `${rpmPct}%`;
+
+      const activeLeds = Math.round((rpmPct / 100) * 10);
+      document.querySelectorAll(".shift-led").forEach((led) => {
+        const idx = Number(led.dataset.led);
+        if (idx <= activeLeds) {
+          if (idx <= 4) {
+            led.style.backgroundColor = "#10b981";
+            led.style.boxShadow = "0 0 8px rgba(16,185,129,0.7)";
+          } else if (idx <= 7) {
+            led.style.backgroundColor = "#f59e0b";
+            led.style.boxShadow = "0 0 8px rgba(245,158,11,0.7)";
+          } else {
+            led.style.backgroundColor = "#ef4444";
+            led.style.boxShadow = "0 0 10px rgba(239,68,68,0.9)";
+          }
+        } else {
+          led.style.backgroundColor = "#1e293b";
+          led.style.boxShadow = "none";
+        }
+      });
+
+      // ブースト圧
+      const bst = Number(d.bst || 0);
+      const bstSign = bst >= 0 ? "+" : "";
+      const bstPct = Math.min(100, Math.max(0, ((bst + 0.8) / (prof.maxBoost + 0.8)) * 100));
+      document.getElementById("valBoost").innerHTML = `${bstSign}${bst.toFixed(2)} <span class="text-xs font-normal text-slate-400">bar</span>`;
+      document.getElementById("barBoost").style.width = `${bstPct}%`;
+
+      // ドライバー入力
+      const ped = Math.min(100, Math.max(0, Number(d.ped || 0)));
+      const thr = Math.min(100, Math.max(0, Number(d.thr || 0)));
+      const brk = Math.min(100, Math.max(0, Number(d.brk || 0)));
+      const str = Number(d.str || 0);
+
+      document.getElementById("valSteer").textContent = `STEER: ${str >= 0 ? "+" : ""}${str.toFixed(1)}°`;
+      document.getElementById("valPedal").textContent = `${ped.toFixed(1)}%`;
+      document.getElementById("barPedal").style.width = `${ped}%`;
+      document.getElementById("valThrottle").textContent = `${thr.toFixed(1)}%`;
+      document.getElementById("barThrottle").style.width = `${thr}%`;
+      document.getElementById("valBrake").textContent = `${brk.toFixed(1)}%`;
+      document.getElementById("barBrake").style.width = `${brk}%`;
+
+      // 駆動配分 & e-LSD
+      const frontPct = prof.isRwdOnly ? 0 : Math.min(50, Math.max(0, Math.round(d.awd_f !== undefined ? d.awd_f : prof.defaultFront)));
+      const rearPct = 100 - frontPct;
+      const lsdL = Math.min(85, Math.max(15, Math.round(d.lsd_l !== undefined ? d.lsd_l : 50)));
+      const lsdR = 100 - lsdL;
+
+      document.getElementById("valFrontPct").textContent = `${frontPct}%`;
+      document.getElementById("valRearPct").textContent = `${rearPct}%`;
+      document.getElementById("barFrontSplit").style.width = `${frontPct}%`;
+      document.getElementById("valLsdL").textContent = `${lsdL}%`;
+      document.getElementById("valLsdR").textContent = `${lsdR}%`;
+      document.getElementById("barLsdL").style.width = `${lsdL}%`;
+      document.getElementById("barLsdR").style.width = `${lsdR}%`;
+
+      // 熱マネジメント & 燃焼診断
+      document.getElementById("valOilTemp").innerHTML = `${Number(d.oil || 0).toFixed(1)} <span class="text-xs font-normal">°C</span>`;
+      document.getElementById("valTransTemp").innerHTML = `${Number(d.tra || 0).toFixed(1)} <span class="text-xs font-normal">°C</span>`;
+      document.getElementById("valWaterTemp").innerHTML = `${Number(d.wat || 0).toFixed(1)} <span class="text-xs font-normal">°C</span>`;
+      document.getElementById("valIat").innerHTML = `${Number(d.iat || 0).toFixed(1)} <span class="text-xs font-normal text-slate-400">°C</span>`;
+      document.getElementById("valLoad").innerHTML = `${Number(d.lod || 0).toFixed(1)} <span class="text-xs font-normal text-slate-400">%</span>`;
+      document.getElementById("valIgn").innerHTML = `${Number(d.ign || 0).toFixed(1)} <span class="text-xs font-normal text-slate-400">°</span>`;
+      document.getElementById("valAfr").innerHTML = `${Number(d.afr || 1).toFixed(2)} <span class="text-xs font-normal text-slate-400">λ</span>`;
+      document.getElementById("valBat").innerHTML = `${Number(d.bat || 14).toFixed(1)} <span class="text-xs font-normal text-slate-400">V</span>`;
+
+      // Gフォース & GPS座標
+      const gx = Number(d.gx || 0);
+      const gy = Number(d.gy || 0);
+      const totalG = Math.hypot(gx, gy);
+      if (totalG > maxTotalG) maxTotalG = totalG;
+      document.getElementById("maxGLbl").textContent = `MAX: ${maxTotalG.toFixed(2)}G`;
+      document.getElementById("valLatG").textContent = `LAT: ${gx >= 0 ? "+" : ""}${gx.toFixed(2)}G`;
+      document.getElementById("valLonG").textContent = `LON: ${gy >= 0 ? "+" : ""}${gy.toFixed(2)}G`;
+
+      const lat = Number(d.lat || 35.3712);
+      const lng = Number(d.lng || 138.9268);
+      document.getElementById("valCoords").textContent = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+
+      // Canvas描画更新
+      drawChassis(d, prof, frontPct, rearPct);
+      drawGForce(gx, gy);
+      drawTrack(lat, lng);
+    }
+
+    // ================= 7. Canvas ビジュアライザー描画 =================
+    function drawChassis(d, prof, frontPct, rearPct) {
+      const canvas = document.getElementById("chassisCanvas");
+      if (!canvas) return;
+      const rect = canvas.getBoundingClientRect();
+      const w = Math.max(240, Math.floor(rect.width || 320));
+      const h = Math.max(240, Math.floor(rect.height || 280));
+      if (canvas.width !== w || canvas.height !== h) {
+        canvas.width = w;
+        canvas.height = h;
+      }
+
+      const ctx = canvas.getContext("2d");
+      ctx.clearRect(0, 0, w, h);
+
+      const cx = w / 2;
+      const cy = h / 2;
+      const trackW = Math.min(140, w * 0.44);
+      const wheelBase = Math.min(168, h * 0.62);
+      const frontY = cy - wheelBase / 2;
+      const rearY = cy + wheelBase / 2;
+
+      // 車体シルエット輪郭
+      ctx.save();
+      ctx.strokeStyle = "rgba(148, 163, 184, 0.25)";
+      ctx.fillStyle = "rgba(15, 23, 42, 0.65)";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.roundRect(cx - trackW * 0.48, frontY - 26, trackW * 0.96, wheelBase + 52, 26);
+      ctx.fill();
+      ctx.stroke();
+
+      // プロペラシャフト & アクスル
+      ctx.strokeStyle = frontPct > 0 ? "rgba(56, 189, 248, 0.65)" : "rgba(100, 116, 139, 0.25)";
+      ctx.lineWidth = frontPct > 0 ? 4 : 2;
+      ctx.beginPath();
+      ctx.moveTo(cx, frontY);
+      ctx.lineTo(cx, cy);
+      ctx.stroke();
+
+      ctx.strokeStyle = "rgba(225, 29, 72, 0.85)";
+      ctx.lineWidth = 5;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.lineTo(cx, rearY);
+      ctx.stroke();
+
+      // フロント・リアアクスル
+      ctx.strokeStyle = frontPct > 0 ? "#38bdf8" : "#475569";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(cx - trackW / 2, frontY);
+      ctx.lineTo(cx + trackW / 2, frontY);
+      ctx.stroke();
+
+      ctx.strokeStyle = "#f43f5e";
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.moveTo(cx - trackW / 2, rearY);
+      ctx.lineTo(cx + trackW / 2, rearY);
+      ctx.stroke();
+
+      // センターデフ / トランスアクスルノード
+      ctx.fillStyle = prof && prof.isDebug ? "#22d3ee" : "#e11d48";
+      ctx.beginPath();
+      ctx.arc(cx, cy, 9, 0, Math.PI * 2);
+      ctx.fill();
+
+      // 4輪タイヤ描画
+      const steerRad = ((Number(d.str || 0)) * 0.35 * Math.PI) / 180;
+      const spd = Math.round(d.spd || 0);
+      const wheels = [
+        { x: cx - trackW / 2, y: frontY, ang: steerRad, pct: frontPct / 2, spd: Math.round(d.ws_fl !== undefined ? d.ws_fl : spd), align: "right" },
+        { x: cx + trackW / 2, y: frontY, ang: steerRad, pct: frontPct / 2, spd: Math.round(d.ws_fr !== undefined ? d.ws_fr : spd), align: "left" },
+        { x: cx - trackW / 2, y: rearY, ang: 0, pct: rearPct / 2, spd: Math.round(d.ws_rl !== undefined ? d.ws_rl : spd), align: "right" },
+        { x: cx + trackW / 2, y: rearY, ang: 0, pct: rearPct / 2, spd: Math.round(d.ws_rr !== undefined ? d.ws_rr : spd), align: "left" }
+      ];
+
+      wheels.forEach((wl) => {
+        ctx.save();
+        ctx.translate(wl.x, wl.y);
+        ctx.rotate(wl.ang);
+        ctx.fillStyle = "#090d16";
+        ctx.strokeStyle = wl.pct > 0 ? "#38bdf8" : "#64748b";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.roundRect(-11, -22, 22, 44, 5);
+        ctx.fill();
+        ctx.stroke();
+
+        // トルク充填インジケーター
+        const fillH = Math.min(38, (wl.pct / 50) * 38);
+        if (fillH > 1) {
+          ctx.fillStyle = wl.y < cy ? "rgba(56, 189, 248, 0.75)" : "rgba(244, 63, 94, 0.85)";
+          ctx.fillRect(-8, 19 - fillH, 16, fillH);
+        }
+        ctx.restore();
+
+        // 車輪速ラベル
+        ctx.fillStyle = "#cbd5e1";
+        ctx.font = "bold 11px 'JetBrains Mono', monospace";
+        ctx.textAlign = wl.align === "right" ? "right" : "left";
+        const offsetX = wl.align === "right" ? -18 : 18;
+        ctx.fillText(`${wl.spd}`, wl.x + offsetX, wl.y + 4);
+      });
+
+      ctx.restore();
+    }
+
+    function drawGForce(latG, lonG) {
+      const canvas = document.getElementById("gForceCanvas");
+      if (!canvas) return;
+      const ctx = canvas.getContext("2d");
+      const w = canvas.width;
+      const h = canvas.height;
+      const cx = w / 2;
+      const cy = h / 2;
+      const maxR = (w / 2) - 10;
+
+      ctx.clearRect(0, 0, w, h);
+
+      // 同心円グリッド (0.5G / 1.0G / 1.5G)
+      [0.33, 0.66, 1.0].forEach((ratio) => {
+        ctx.strokeStyle = "rgba(148, 163, 184, 0.22)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(cx, cy, maxR * ratio, 0, Math.PI * 2);
+        ctx.stroke();
+      });
+
+      // 十字軸
+      ctx.strokeStyle = "rgba(148, 163, 184, 0.25)";
+      ctx.beginPath();
+      ctx.moveTo(cx, 8);
+      ctx.lineTo(cx, h - 8);
+      ctx.moveTo(8, cy);
+      ctx.lineTo(w - 8, cy);
+      ctx.stroke();
+
+      // 現在Gボール描画 (1.5Gスケール)
+      const clampX = Math.max(-1.5, Math.min(1.5, latG));
+      const clampY = Math.max(-1.5, Math.min(1.5, lonG));
+      const px = cx + (clampX / 1.5) * maxR;
+      const py = cy - (clampY / 1.5) * maxR;
+
+      ctx.fillStyle = "rgba(244, 63, 94, 0.35)";
+      ctx.beginPath();
+      ctx.arc(px, py, 11, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = "#f43f5e";
+      ctx.beginPath();
+      ctx.arc(px, py, 5.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    function drawTrack(lat, lng) {
+      const canvas = document.getElementById("trackCanvas");
+      if (!canvas) return;
+      const ctx = canvas.getContext("2d");
+      const w = canvas.width;
+      const h = canvas.height;
+
+      if (lat !== 0 && lng !== 0) {
+        const last = trackPoints[trackPoints.length - 1];
+        if (!last || Math.hypot(last.lat - lat, last.lng - lng) > 0.00001) {
+          trackPoints.push({ lat, lng });
+          if (trackPoints.length > 180) trackPoints.shift();
+        }
+      }
+
+      ctx.clearRect(0, 0, w, h);
+      if (trackPoints.length < 2) {
+        ctx.fillStyle = "#38bdf8";
+        ctx.beginPath();
+        ctx.arc(w / 2, h / 2, 5, 0, Math.PI * 2);
+        ctx.fill();
+        return;
+      }
+
+      let minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity;
+      trackPoints.forEach((p) => {
+        if (p.lat < minLat) minLat = p.lat;
+        if (p.lat > maxLat) maxLat = p.lat;
+        if (p.lng < minLng) minLng = p.lng;
+        if (p.lng > maxLng) maxLng = p.lng;
+      });
+
+      const spanLat = Math.max(0.0005, maxLat - minLat);
+      const spanLng = Math.max(0.0005, maxLng - minLng);
+      const pad = 16;
+
+      const toXY = (p) => ({
+        x: pad + ((p.lng - minLng) / spanLng) * (w - pad * 2),
+        y: h - pad - ((p.lat - minLat) / spanLat) * (h - pad * 2)
+      });
+
+      ctx.strokeStyle = "rgba(56, 189, 248, 0.75)";
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      trackPoints.forEach((p, idx) => {
+        const pt = toXY(p);
+        if (idx === 0) ctx.moveTo(pt.x, pt.y);
+        else ctx.lineTo(pt.x, pt.y);
+      });
+      ctx.stroke();
+
+      const cur = toXY(trackPoints[trackPoints.length - 1]);
+      ctx.fillStyle = "#10b981";
+      ctx.beginPath();
+      ctx.arc(cur.x, cur.y, 5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // ================= 8. Arduino 接続監視ウォッチドッグ =================
+    function formatUptime(sec) {
+      const s = Math.max(0, Math.floor(sec || 0));
+      const hh = String(Math.floor(s / 3600)).padStart(2, "0");
+      const mm = String(Math.floor((s % 3600) / 60)).padStart(2, "0");
+      const ss = String(s % 60).padStart(2, "0");
+      return `${hh}:${mm}:${ss}`;
+    }
+
+    function updateMonitorWatchdog() {
+      const now = Date.now();
+      while (rxTimestamps.length > 0 && now - rxTimestamps[0] > 2000) {
+        rxTimestamps.shift();
+      }
+      const hz = (rxTimestamps.length / 2).toFixed(1);
+      const ageMs = lastArduinoRxTime > 0 ? now - lastArduinoRxTime : Infinity;
+      const isOnline = ageMs < 2500;
+
+      // トップバー更新
+      const topArdDot = document.getElementById("topArdDot");
+      const topHzBadge = document.getElementById("topHzBadge");
+      if (topArdDot) {
+        topArdDot.className = isOnline
+          ? "w-2 h-2 rounded-full bg-emerald-400 animate-pulse"
+          : "w-2 h-2 rounded-full bg-rose-500";
+      }
+      if (topHzBadge) topHzBadge.textContent = `${hz}Hz`;
+
+      // モーダル内ステータス更新
+      const modalDot = document.getElementById("modalPulseDot");
+      const pipeArdDot = document.getElementById("pipeArdDot");
+      const pipeArdState = document.getElementById("pipeArdState");
+      const pipeArdSub = document.getElementById("pipeArdSub");
+      const pipeCanDot = document.getElementById("pipeCanDot");
+      const pipeCanState = document.getElementById("pipeCanState");
+      const pipeCanSub = document.getElementById("pipeCanSub");
+
+      if (modalDot) {
+        modalDot.className = isOnline
+          ? "w-3 h-3 rounded-full bg-emerald-400 animate-pulse"
+          : "w-3 h-3 rounded-full bg-amber-500";
+      }
+
+      if (pipeArdDot && pipeArdState && pipeArdSub) {
+        if (isOnline) {
+          pipeArdDot.className = "w-2 h-2 rounded-full bg-emerald-400";
+          pipeArdState.textContent = "ONLINE";
+          pipeArdState.className = "text-xs font-extrabold text-emerald-400";
+          pipeArdSub.textContent = `${hz} Hz Streaming`;
+        } else {
+          pipeArdDot.className = "w-2 h-2 rounded-full bg-rose-500";
+          pipeArdState.textContent = "OFFLINE / WAIT";
+          pipeArdState.className = "text-xs font-extrabold text-rose-400";
+          pipeArdSub.textContent = lastArduinoRxTime > 0 ? "Signal Timed Out" : "No packets yet";
+        }
+      }
+
+      if (pipeCanDot && pipeCanState && pipeCanSub) {
+        if (!isOnline) {
+          pipeCanDot.className = "w-2 h-2 rounded-full bg-slate-500";
+          pipeCanState.textContent = "STANDBY";
+          pipeCanState.className = "text-xs font-extrabold text-slate-300";
+          pipeCanSub.textContent = "500kbps / SIM";
+        } else if (latestArduinoMeta.can_ok === 1) {
+          pipeCanDot.className = "w-2 h-2 rounded-full bg-emerald-400";
+          pipeCanState.textContent = "REAL CAN OK";
+          pipeCanState.className = "text-xs font-extrabold text-emerald-400";
+          pipeCanSub.textContent = "OBD-II 500kbps Live";
+        } else if (latestArduinoMeta.sim === 1) {
+          pipeCanDot.className = "w-2 h-2 rounded-full bg-cyan-400";
+          pipeCanState.textContent = "R4 DUMMY SIM";
+          pipeCanState.className = "text-xs font-extrabold text-cyan-300";
+          pipeCanSub.textContent = "Arduino Internal Sim";
+        } else {
+          pipeCanDot.className = "w-2 h-2 rounded-full bg-amber-400";
+          pipeCanState.textContent = "NO CAN SIGNAL";
+          pipeCanState.className = "text-xs font-extrabold text-amber-400";
+          pipeCanSub.textContent = "Waiting ECU Response";
+        }
+      }
+
+      const monHz = document.getElementById("monHz");
+      const monAge = document.getElementById("monAge");
+      const monRtt = document.getElementById("monRtt");
+      const monRssi = document.getElementById("monRssi");
+      const monUptime = document.getElementById("monUptime");
+      const monIp = document.getElementById("monIp");
+      const monRemoteModel = document.getElementById("monRemoteModel");
+      const monPacketCount = document.getElementById("monPacketCount");
+
+      if (monHz) monHz.textContent = `${hz} Hz`;
+      if (monAge) monAge.textContent = lastArduinoRxTime > 0 ? `${(ageMs / 1000).toFixed(1)} 秒前` : "未受信";
+      if (monRtt) monRtt.textContent = lastRttMs !== null ? `${lastRttMs} ms` : "-- ms";
+      if (monRssi) monRssi.textContent = latestArduinoMeta.rssi !== null ? `${latestArduinoMeta.rssi} dBm` : "-- dBm";
+      if (monUptime) monUptime.textContent = formatUptime(latestArduinoMeta.up);
+      if (monIp) monIp.textContent = latestArduinoMeta.ip;
+      if (monRemoteModel) monRemoteModel.textContent = latestArduinoMeta.mdl;
+      if (monPacketCount) monPacketCount.textContent = `${totalPacketsRx} pkts`;
+
+      // モーダル内ダミー切替ボタンのアクティブハイライト同期
+      const btnSimOn = document.getElementById("btnModalSimOn");
+      const btnSimOff = document.getElementById("btnModalSimOff");
+      if (btnSimOn && btnSimOff && isOnline) {
+        if (latestArduinoMeta.sim === 1) {
+          btnSimOn.className = "px-3 py-2 rounded-lg bg-cyan-600 text-white border border-cyan-300 text-xs font-bold shadow transition";
+          btnSimOff.className = "px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-xs font-bold transition";
+        } else {
+          btnSimOn.className = "px-3 py-2 rounded-lg bg-cyan-600/20 hover:bg-cyan-600/40 text-cyan-200 border border-cyan-500/40 text-xs font-bold transition";
+          btnSimOff.className = "px-3 py-2 rounded-lg bg-emerald-600 text-white border border-emerald-300 text-xs font-bold shadow transition";
+        }
+      }
+    }
+
+    // ================= 9. MQTT WebSocket 接続・受信ハンドラ =================
+    function initMqtt() {
+      if (typeof window.mqtt === "undefined") {
+        appendLog("[ERR] MQTT library unavailable.");
+        return;
+      }
+
+      const mqttDot = document.getElementById("mqttDot");
+      const mqttTxt = document.getElementById("mqttStatusText");
+      const pipeMqttDot = document.getElementById("pipeMqttDot");
+      const pipeMqttState = document.getElementById("pipeMqttState");
+
+      try {
+        const clientId = "pit-ui-" + Math.random().toString(16).slice(2, 10);
+        client = window.mqtt.connect("wss://broker.emqx.io:8084/mqtt", {
+          clientId,
+          clean: true,
+          reconnectPeriod: 2500,
+          connectTimeout: 8000
+        });
+
+        client.on("connect", () => {
+          if (mqttDot) mqttDot.className = "w-2 h-2 rounded-full bg-emerald-400";
+          if (mqttTxt) {
+            mqttTxt.textContent = "MQTT ONLINE";
+            mqttTxt.className = "text-emerald-400 font-bold";
+          }
+          if (pipeMqttDot) pipeMqttDot.className = "w-2 h-2 rounded-full bg-emerald-400";
+          if (pipeMqttState) {
+            pipeMqttState.textContent = "CONNECTED";
+            pipeMqttState.className = "text-xs font-extrabold text-emerald-400";
+          }
+          client.subscribe(TOPIC_DATA);
+          appendLog(`[MQTT] Connected (${clientId}). Subscribed to ${TOPIC_DATA}`);
+          sendPingTest();
+        });
+
+        client.on("message", (topic, payloadBuf) => {
+          const text = payloadBuf.toString();
+          lastArduinoRxTime = Date.now();
+          totalPacketsRx += 1;
+          rxTimestamps.push(lastArduinoRxTime);
+
+          const rawBox = document.getElementById("rawJsonBox");
+          if (rawBox) rawBox.textContent = text;
+
+          try {
+            const data = JSON.parse(text);
+
+            // PING応答パケット処理
+            if (data.pong) {
+              if (lastPingSentAt > 0) {
+                lastRttMs = Math.round(performance.now() - lastPingSentAt);
+              }
+              if (data.ip) latestArduinoMeta.ip = data.ip;
+              if (data.m) latestArduinoMeta.mdl = data.m;
+              if (data.s !== undefined) {
+                latestArduinoMeta.sim = Number(data.s);
+                updateDummyButtonVisuals(latestArduinoMeta.sim === 1);
+              }
+              const fb = document.getElementById("modalCmdFeedback");
+              if (fb) fb.textContent = `✓ Arduino基板LED点灯確認 [${data.led || "PING"}] (RTT: ${lastRttMs ?? "--"} ms)`;
+              appendLog(`[PONG] Arduino R4 responded & LED lit [${data.led || "PING"}] (RTT: ${lastRttMs ?? "--"} ms, IP: ${latestArduinoMeta.ip})`);
+              return;
+            }
+
+            // Arduino基板LED点灯ACK応答処理
+            if (data.ack) {
+              const fb = document.getElementById("modalCmdFeedback");
+              if (fb) fb.textContent = `✓ Arduino基板LED点灯確認 [${data.led}] (${data.cmd})`;
+              appendLog(`[LED ACK] Arduino基板LED点灯確認 -> ${data.led} (cmd: ${data.cmd})`);
+              return;
+            }
+
+            // ECU診断スキャン結果ログ処理
+            if (data.diag) {
+              appendLog(`[ECU SCAN] ${data.diag}`);
+              return;
+            }
+
+            // テレメトリー本体パケット処理
+            const normalized = normalizeArduinoPacket(data);
+            if (normalized.mdl && VEHICLE_PROFILES[normalized.mdl] && normalized.mdl !== currentModel && (Date.now() - lastModelCmdAt > 1500)) {
+              selectVehicle(normalized.mdl, true);
+              appendLog(`[SYNC] Vehicle profile synced from Arduino -> ${normalized.mdl}`);
+            }
+            updateDummyButtonVisuals(normalized.sim === 1);
+            const src = normalized.can_ok === 1 ? "REAL" : (normalized.sim === 1 ? "ARDUINO_SIM" : "REAL");
+            updateDashboard(normalized, src);
+          } catch (err) {
+            appendLog(`[WARN] Invalid JSON packet received: ${err.message}`);
+          }
+        });
+
+        client.on("offline", () => {
+          if (mqttDot) mqttDot.className = "w-2 h-2 rounded-full bg-amber-500";
+          if (mqttTxt) {
+            mqttTxt.textContent = "RECONNECTING";
+            mqttTxt.className = "text-amber-400 font-bold";
+          }
+          if (pipeMqttDot) pipeMqttDot.className = "w-2 h-2 rounded-full bg-amber-500";
+          if (pipeMqttState) {
+            pipeMqttState.textContent = "RECONNECTING";
+            pipeMqttState.className = "text-xs font-extrabold text-amber-400";
+          }
+        });
+
+        client.on("error", (err) => {
+          appendLog(`[MQTT ERR] ${err.message || err}`);
+        });
+      } catch (e) {
+        appendLog(`[ERR] MQTT init failed: ${e.message}`);
+      }
+    }
+
+    function loadMqttScriptAsync() {
+      const s = document.createElement("script");
+      s.src = "https://unpkg.com/mqtt@5.10.1/dist/mqtt.min.js";
+      s.async = true;
+      s.onload = () => initMqtt();
+      s.onerror = () => {
+        const fallback = document.createElement("script");
+        fallback.src = "https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.min.js";
+        fallback.async = true;
+        fallback.onload = () => initMqtt();
+        document.head.appendChild(fallback);
+      };
+      document.head.appendChild(s);
+    }
+
     // ================= 10. 初期起動処理 =================
+    function updateEnvHostBadge() {
+      const dot = document.getElementById("envHostDot");
+      const txt = document.getElementById("envHostText");
+      if (!dot || !txt) return;
+      const host = window.location.hostname || "";
+      if (host.includes("github.io")) {
+        dot.className = "w-2 h-2 rounded-full bg-emerald-400";
+        txt.textContent = "GITHUB LIVE";
+        txt.className = "text-emerald-300 font-bold";
+      } else if (window.location.protocol === "file:") {
+        dot.className = "w-2 h-2 rounded-full bg-indigo-400";
+        txt.textContent = "LOCAL FILE";
+        txt.className = "text-indigo-300 font-bold";
+      } else {
+        dot.className = "w-2 h-2 rounded-full bg-sky-400";
+        txt.textContent = "WEB HOST";
+        txt.className = "text-sky-300 font-bold";
+      }
+    }
+
     window.addEventListener("DOMContentLoaded", () => {
-      selectVehicle("GRECALE", true);
+      updateEnvHostBadge();
+      const params = new URLSearchParams(window.location.search);
+      const initialModel = params.get("v") && VEHICLE_PROFILES[params.get("v")] ? params.get("v") : "GRECALE";
+      selectVehicle(initialModel, true);
       drawGForce(0, 0);
       renderQrCodes();
       loadQrScriptAsync();
