@@ -543,7 +543,7 @@
 
           <div class="grid grid-cols-2 sm:grid-cols-3 gap-2 mono text-xs">
             <div class="p-2.5 rounded-xl bg-slate-950 border border-slate-800">
-              <span class="text-[10px] text-slate-500 font-sans block">CAN通信状態 (c)</span>
+              <span class="text-[10px] text-slate-500 font-sans block">CAN通信・プロトコル (c)</span>
               <strong id="dbgCanState" class="text-sm text-rose-400">0 (未確立)</strong>
             </div>
             <div class="p-2.5 rounded-xl bg-slate-950 border border-slate-800">
@@ -1105,7 +1105,7 @@
       let miniMap = null, miniTile = null, miniPoly = null, miniMarker = null;
       let fullMap = null, fullTile = null, fullPoly = null, fullMarker = null;
       let recMap = null, recTile = null, recTrackBg = null, recSfLine = null, recLivePoly = null, recMarker = null;
-      let anMap = null, anTile = null, anRefPoly = null, anCmpPoly = null;
+      let anMap = null, anTile = null, anRefPoly = null, anCmpPoly = null, anGhostA = null, anGhostB = null;
       let trackPoints = [];
 
       let localDemoTimer = null;
@@ -1122,6 +1122,8 @@
       let pendingPingTs = 0;
       let arduinoIp = "";
       let arduinoSyncedModel = "";
+      let arduinoProtoTag = "";
+      let lastModelSyncCmdTs = 0;
       let arduinoSimActive = false;
       let arduinoCanOk = false;
       let arduinoGpsFix = false;
@@ -1131,54 +1133,45 @@
       let latestUptime = 0;
       let latestRawJsonStr = "";
 
-      const lapSession = {
-        active: false,
-        inPrepLap: false,
-        lapNumber: 0,
-        lapStartTime: 0,
-        lastCrossTime: 0,
-        lastDistM: null,
-        sectorFlags: [false, false],
-        sectorSplitTimes: [0, 0],
-        currentSamples: [],
-        recordedLaps: [],
-        bestLap: null,
-        bestSectors: [Infinity, Infinity, Infinity]
-      };
-      let sessionRepository = [];
-      let selectedRefLapId = null;
-      let selectedCmpLapId = null;
-      let chronoAnimId = null;
+      // ラップ計測セッションリポジトリ
+      let sessionsRepo = [];
+      let activeRecSession = null;
+      let recPrevLat = null;
+      let recPrevLng = null;
 
-      // ================= 4. 汎用ユーティリティ =================
-      function haversineM(lat1, lon1, lat2, lon2) {
+      // ================= 4. 共通ユーティリティ関数 =================
+      function haversineM(lat1, lng1, lat2, lng2) {
         const R = 6371000;
-        const dLat = (lat2 - lat1) * Math.PI / 180;
-        const dLon = (lon2 - lon1) * Math.PI / 180;
+        const toRad = Math.PI / 180;
+        const dLat = (lat2 - lat1) * toRad;
+        const dLng = (lng2 - lng1) * toRad;
         const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-                  Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
-                  Math.sin(dLon / 2) * Math.sin(dLon / 2);
+                  Math.cos(lat1 * toRad) * Math.cos(lat2 * toRad) *
+                  Math.sin(dLng / 2) * Math.sin(dLng / 2);
         return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
       }
 
-      function formatLapMs(ms) {
-        if (!Number.isFinite(ms) || ms <= 0) return "--:--.---";
-        const mins = Math.floor(ms / 60000);
-        const secs = Math.floor((ms % 60000) / 1000);
-        const millis = Math.floor(ms % 1000);
-        return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}.${String(millis).padStart(3, "0")}`;
+      function formatLapTime(sec) {
+        if (!Number.isFinite(sec) || sec <= 0) return "--:--.---";
+        const mins = Math.floor(sec / 60);
+        const rem = sec - mins * 60;
+        const secs = Math.floor(rem);
+        const ms = Math.round((rem - secs) * 1000);
+        return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}.${String(ms).padStart(3, "0")}`;
       }
 
-      function formatSec(sec) {
-        if (!Number.isFinite(sec) || sec <= 0) return "--.--";
-        return `${sec.toFixed(2)}s`;
+      function formatDelta(sec) {
+        if (!Number.isFinite(sec)) return "±0.000 s";
+        const sign = sec > 0.0005 ? "+" : sec < -0.0005 ? "-" : "±";
+        return `${sign}${Math.abs(sec).toFixed(3)} s`;
       }
 
       function escapeHtml(str) {
         return String(str)
           .replace(/&/g, "&amp;")
           .replace(/</g, "&lt;")
-          .replace(/>/g, "&gt;");
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;");
       }
 
       function appendLog(msg) {
@@ -1186,56 +1179,635 @@
         const line = `[${ts}] ${msg}`;
         const el = document.getElementById("sysLog");
         if (el) {
-          const div = document.createElement("div");
-          div.textContent = line;
-          el.prepend(div);
-          while (el.children.length > 50) el.removeChild(el.lastChild);
+          const row = document.createElement("div");
+          row.textContent = line;
+          el.prepend(row);
+          while (el.children.length > 50) {
+            el.removeChild(el.lastChild);
+          }
         }
-        appendDebugConsoleLine("EVENT", line, "text-cyan-300");
+        appendConsoleStream("EVENT", line);
       }
 
       function showLapToast(msg) {
-        const box = document.getElementById("lapToastBanner");
+        const banner = document.getElementById("lapToastBanner");
         const txt = document.getElementById("lapToastText");
-        if (box && txt) {
-          txt.textContent = msg;
-          box.classList.remove("hidden");
-        }
+        if (!banner || !txt) return;
+        txt.textContent = msg;
+        banner.classList.remove("hidden");
       }
 
-      function exportFileDownload(content, filename, mime) {
-        const blob = new Blob([content], { type: mime });
+      function downloadTextFile(filename, content, mimeType) {
+        const blob = new Blob([content], { type: mimeType });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
         a.download = filename;
         document.body.appendChild(a);
         a.click();
-        a.remove();
+        document.body.removeChild(a);
         URL.revokeObjectURL(url);
       }
 
-      // ================= 4.5 デバッグ画面・信号診断・自動保存エンジン =================
-      function appendDebugConsoleLine(tag, text, colorClass = "text-slate-300") {
-        const ts = new Date().toTimeString().split(" ")[0];
-        debugStore.consoleLines.push({ ts, tag, text });
-        if (debugStore.consoleLines.length > 250) debugStore.consoleLines.shift();
+      // ================= 5. FSWトラック物理モデル & UI要素構築 =================
+      function buildFswTrack() {
+        fswNodes = [];
+        let rawTotal = 0;
+        const cum = [0];
+        for (let i = 0; i < FSW_RAW_COORDS.length; i++) {
+          const nxt = (i + 1) % FSW_RAW_COORDS.length;
+          rawTotal += haversineM(
+            FSW_RAW_COORDS[i][0], FSW_RAW_COORDS[i][1],
+            FSW_RAW_COORDS[nxt][0], FSW_RAW_COORDS[nxt][1]
+          );
+          cum.push(rawTotal);
+        }
+        const scale = FSW_LENGTH_M / (rawTotal || 1);
+        for (let i = 0; i < FSW_RAW_COORDS.length; i++) {
+          const prv = (i - 1 + FSW_RAW_COORDS.length) % FSW_RAW_COORDS.length;
+          const nxt = (i + 1) % FSW_RAW_COORDS.length;
+          const dM = cum[i] * scale;
 
-        if (consolePaused) return;
-        const stream = document.getElementById("debugTerminalStream");
-        if (!stream) return;
+          const x1 = (FSW_RAW_COORDS[i][1] - FSW_RAW_COORDS[prv][1]) * 91000;
+          const y1 = (FSW_RAW_COORDS[i][0] - FSW_RAW_COORDS[prv][0]) * 111000;
+          const x2 = (FSW_RAW_COORDS[nxt][1] - FSW_RAW_COORDS[i][1]) * 91000;
+          const y2 = (FSW_RAW_COORDS[nxt][0] - FSW_RAW_COORDS[i][0]) * 111000;
+          const l1 = Math.max(1, Math.hypot(x1, y1));
+          const l2 = Math.max(1, Math.hypot(x2, y2));
+          const cross = (x1 * y2 - y1 * x2) / (l1 * l2);
+          const dot = Math.max(-1, Math.min(1, (x1 * x2 + y1 * y2) / (l1 * l2)));
+          const curv = (Math.acos(dot) * (cross >= 0 ? 1 : -1)) / ((l1 + l2) * 0.5);
 
-        const row = document.createElement("div");
-        row.className = "border-b border-slate-900/90 pb-1 break-all";
-        row.innerHTML = `<span class="text-slate-500">[${ts}]</span> <span class="font-bold text-amber-400">[${tag}]</span> <span class="${colorClass}">${escapeHtml(text)}</span>`;
-        stream.appendChild(row);
-        while (stream.children.length > 140) stream.removeChild(stream.firstChild);
-        stream.scrollTop = stream.scrollHeight;
+          let vMax = Math.abs(curv) > 0.0005 ? Math.sqrt(12.2 / Math.abs(curv)) * 3.6 : 292;
+          FSW_CORNERS.forEach((c) => {
+            if (Math.abs(dM - c.apexM) < 95) vMax = Math.min(vMax, c.targetSpd);
+          });
+          fswNodes.push({
+            lat: FSW_RAW_COORDS[i][0],
+            lng: FSW_RAW_COORDS[i][1],
+            distM: dM,
+            curv: curv,
+            targetSpd: Math.max(60, Math.min(292, vMax))
+          });
+        }
+        resetControlLineToFsw();
       }
 
+      function resetControlLineToFsw() {
+        const p0 = FSW_RAW_COORDS[0];
+        const p1 = FSW_RAW_COORDS[1];
+        const dLat = p1[0] - p0[0];
+        const dLng = p1[1] - p0[1];
+        const len = Math.hypot(dLat, dLng) || 1;
+        const nx = -dLng / len;
+        const ny = dLat / len;
+        const w = 0.00022;
+        controlLine = {
+          lat: p0[0],
+          lng: p0[1],
+          pA: [p0[0] + nx * w, p0[1] + ny * w],
+          pB: [p0[0] - nx * w, p0[1] - ny * w]
+        };
+      }
+
+      function setControlLineAtCurrentPos() {
+        const w = 0.00022;
+        controlLine = {
+          lat: lastLat,
+          lng: lastLng,
+          pA: [lastLat, lastLng - w],
+          pB: [lastLat, lastLng + w]
+        };
+        if (recSfLine && recMap) {
+          recSfLine.setLatLngs([controlLine.pA, controlLine.pB]);
+        }
+        showLapToast(`現在地 (${lastLat.toFixed(5)}, ${lastLng.toFixed(5)}) をS/Fラインに設定しました`);
+      }
+
+      function buildShiftLights() {
+        const container = document.getElementById("shiftLights");
+        if (!container) return;
+        container.innerHTML = "";
+        for (let i = 0; i < 12; i++) {
+          const led = document.createElement("div");
+          led.id = `shiftLed_${i}`;
+          led.className = "h-2.5 rounded-full bg-slate-900 border border-slate-800 transition-all duration-75";
+          container.appendChild(led);
+        }
+      }
+
+      function buildDrawerVehicleButtons() {
+        const list = document.getElementById("vehicleProfileList");
+        if (!list) return;
+        list.innerHTML = "";
+        Object.keys(VEHICLE_PROFILES).forEach((key) => {
+          const p = VEHICLE_PROFILES[key];
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.dataset.action = "select-vehicle";
+          btn.dataset.model = key;
+          btn.id = `vehBtn_${key}`;
+          btn.className = "w-full text-left p-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 transition flex items-center justify-between gap-2";
+          btn.innerHTML = `
+            <div class="pointer-events-none min-w-0">
+              <div class="flex items-center gap-2">
+                <span class="w-2 h-2 rounded-full shrink-0" style="background:${p.color}"></span>
+                <span class="text-xs font-black text-white truncate">${p.name}</span>
+              </div>
+              <p class="text-[10px] text-slate-400 mt-0.5 truncate">${p.sub}</p>
+            </div>
+            <span class="mono text-[10px] font-bold px-2 py-0.5 rounded bg-slate-950 text-slate-300 border border-slate-700 shrink-0 pointer-events-none">${p.drive}</span>
+          `;
+          list.appendChild(btn);
+        });
+      }
+
+      function selectVehicleModel(modelKey, sendCmd = true) {
+        if (!VEHICLE_PROFILES[modelKey]) return;
+        const prevModel = currentModel;
+        currentModel = modelKey;
+        try { localStorage.setItem("maserati_selected_vehicle", modelKey); } catch (e) {}
+        if (prevModel && prevModel !== modelKey) {
+          resetDebugLogs();
+        }
+        const p = VEHICLE_PROFILES[modelKey];
+
+        const nameEl = document.getElementById("headerVehicleName");
+        const subEl = document.getElementById("headerVehicleSub");
+        const driveEl = document.getElementById("headerDriveBadge");
+        const accentEl = document.getElementById("brandAccentBar");
+        if (nameEl) nameEl.textContent = p.name;
+        if (subEl) subEl.textContent = p.sub;
+        if (driveEl) driveEl.textContent = p.drive;
+        if (accentEl) accentEl.style.backgroundColor = p.color;
+
+        document.documentElement.style.setProperty("--accent-primary", p.color);
+        const midLbl = document.getElementById("rpmMidLbl");
+        const redLbl = document.getElementById("rpmRedLbl");
+        if (midLbl) midLbl.textContent = Math.round(p.maxRpm / 2);
+        if (redLbl) redLbl.textContent = `RED ${p.redline}`;
+
+        Object.keys(VEHICLE_PROFILES).forEach((k) => {
+          const btn = document.getElementById(`vehBtn_${k}`);
+          if (!btn) return;
+          if (k === modelKey) {
+            btn.classList.add("border-rose-500", "bg-slate-800");
+            btn.classList.remove("border-slate-800");
+          } else {
+            btn.classList.remove("border-rose-500", "bg-slate-800");
+            btn.classList.add("border-slate-800");
+          }
+        });
+
+        // 実車モードかつCAN未確立時はゼロ表示リセットを維持
+        if (!localDemoTimer && !arduinoSimActive && !arduinoCanOk) {
+          updateTyreMonitor(0, 0, [0, 0, 0, 0], [0, 0, 0, 0], true);
+        }
+
+        if (sendCmd) {
+          lastModelSyncCmdTs = Date.now();
+          publishMqttCommand({ set_vehicle: modelKey });
+          appendLog(`車種切替: ${p.name} (${modelKey})`);
+        }
+      }
+
+      // ================= 6. メーター・タイヤ・Gボール描画エンジン =================
+      function getTyreTempColor(tempC) {
+        if (!Number.isFinite(tempC) || tempC <= 0) {
+          return { bg: "linear-gradient(180deg, #334155, #1e293b)", border: "rgba(51,65,85,0.85)", text: "#94a3b8" };
+        }
+        if (tempC < 35) {
+          return { bg: "linear-gradient(180deg, #0284c7, #0369a1)", border: "#38bdf8", text: "#7dd3fc" };
+        }
+        if (tempC < 65) {
+          return { bg: "linear-gradient(180deg, #10b981, #047857)", border: "#34d399", text: "#6ee7b7" };
+        }
+        if (tempC < 88) {
+          return { bg: "linear-gradient(180deg, #f59e0b, #b45309)", border: "#fbbf24", text: "#fcd34d" };
+        }
+        return { bg: "linear-gradient(180deg, #ef4444, #b91c1c)", border: "#f87171", text: "#fca5a5" };
+      }
+
+      function updateTyreMonitor(awdF, lsdL, tpArr, ttArr, isZeroReset) {
+        const p = VEHICLE_PROFILES[currentModel] || VEHICLE_PROFILES.GRECALE;
+        const splitLbl = document.getElementById("torqueSplitLbl");
+        const lsdLeftEl = document.getElementById("lsdLeftVal");
+        const lsdRightEl = document.getElementById("lsdRightVal");
+
+        if (isZeroReset) {
+          if (splitLbl) splitLbl.textContent = "F 0% : R 0%";
+          if (lsdLeftEl) lsdLeftEl.textContent = "0%";
+          if (lsdRightEl) lsdRightEl.textContent = "0%";
+          ["FL", "FR", "RL", "RR"].forEach((pos) => {
+            const trqEl = document.getElementById(`trq${pos}`);
+            const tpEl = document.getElementById(`tp${pos}`);
+            const ttEl = document.getElementById(`tt${pos}`);
+            const pill = document.getElementById(`tyrePill${pos}`);
+            const card = document.getElementById(`tyreCard${pos}`);
+            if (trqEl) trqEl.textContent = "0%";
+            if (tpEl) tpEl.innerHTML = `0.00 <span class="text-[9px] text-slate-400 font-normal">bar</span>`;
+            if (ttEl) { ttEl.textContent = "0.0°C"; ttEl.style.color = "#94a3b8"; }
+            if (pill) pill.style.background = "linear-gradient(180deg, #334155, #1e293b)";
+            if (card) card.style.borderColor = "rgba(51, 65, 85, 0.85)";
+          });
+          drawChassisDiagram(0, 0, 0);
+          return;
+        }
+
+        const fPct = p.isRwdOnly ? 0 : Math.max(0, Math.min(50, Math.round(awdF)));
+        const rPct = 100 - fPct;
+        const lRatio = Math.max(10, Math.min(90, Math.round(lsdL)));
+        const rRatio = 100 - lRatio;
+
+        const trqFL = Math.round(fPct * 0.5);
+        const trqFR = fPct - trqFL;
+        const trqRL = Math.round(rPct * (lRatio / 100));
+        const trqRR = rPct - trqRL;
+
+        if (splitLbl) splitLbl.textContent = `F ${fPct}% : R ${rPct}%`;
+        if (lsdLeftEl) lsdLeftEl.textContent = `${lRatio}%`;
+        if (lsdRightEl) lsdRightEl.textContent = `${rRatio}%`;
+
+        const trqMap = [trqFL, trqFR, trqRL, trqRR];
+        const names = ["FL", "FR", "RL", "RR"];
+        names.forEach((pos, idx) => {
+          const press = Number(tpArr[idx] || 0);
+          const temp = Number(ttArr[idx] || 0);
+          const col = getTyreTempColor(temp);
+
+          const trqEl = document.getElementById(`trq${pos}`);
+          const tpEl = document.getElementById(`tp${pos}`);
+          const ttEl = document.getElementById(`tt${pos}`);
+          const pill = document.getElementById(`tyrePill${pos}`);
+          const card = document.getElementById(`tyreCard${pos}`);
+
+          if (trqEl) trqEl.textContent = `${trqMap[idx]}%`;
+          if (tpEl) tpEl.innerHTML = `${press.toFixed(2)} <span class="text-[9px] text-slate-400 font-normal">bar</span>`;
+          if (ttEl) {
+            ttEl.textContent = `${temp.toFixed(1)}°C`;
+            ttEl.style.color = col.text;
+          }
+          if (pill) pill.style.background = col.bg;
+          if (card) card.style.borderColor = col.border;
+        });
+
+        drawChassisDiagram(fPct, lRatio, rRatio);
+      }
+
+      function drawChassisDiagram(awdF, lsdL, lsdR) {
+        const canvas = document.getElementById("chassisCanvas");
+        if (!canvas) return;
+        const rect = canvas.parentElement.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) return;
+        const dpr = window.devicePixelRatio || 1;
+        canvas.width = rect.width * dpr;
+        canvas.height = rect.height * dpr;
+        const ctx = canvas.getContext("2d");
+        ctx.scale(dpr, dpr);
+        ctx.clearRect(0, 0, rect.width, rect.height);
+
+        const cx = rect.width / 2;
+        const cy = rect.height / 2;
+        const frontY = cy - 68;
+        const rearY = cy + 68;
+        const halfTrack = 48;
+
+        ctx.strokeStyle = "rgba(100, 116, 139, 0.35)";
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.moveTo(cx, frontY);
+        ctx.lineTo(cx, rearY);
+        ctx.stroke();
+
+        // Front Axle
+        ctx.strokeStyle = awdF > 0 ? "rgba(56, 189, 248, 0.75)" : "rgba(71, 85, 105, 0.35)";
+        ctx.lineWidth = awdF > 0 ? 4 : 2.5;
+        ctx.beginPath();
+        ctx.moveTo(cx - halfTrack, frontY);
+        ctx.lineTo(cx + halfTrack, frontY);
+        ctx.stroke();
+
+        // Rear Axle
+        ctx.strokeStyle = (lsdL > 0 || lsdR > 0) ? "rgba(244, 63, 94, 0.85)" : "rgba(71, 85, 105, 0.35)";
+        ctx.lineWidth = (lsdL > 0 || lsdR > 0) ? 4.5 : 2.5;
+        ctx.beginPath();
+        ctx.moveTo(cx - halfTrack, rearY);
+        ctx.lineTo(cx + halfTrack, rearY);
+        ctx.stroke();
+
+        // Center Diff / Gearbox Node
+        ctx.fillStyle = "#0f172a";
+        ctx.strokeStyle = "#38bdf8";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(cx, cy, 11, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      }
+
+      function drawGForceBall(gx, gy) {
+        const canvas = document.getElementById("gForceCanvas");
+        if (!canvas) return;
+        const rect = canvas.parentElement.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) return;
+        const dpr = window.devicePixelRatio || 1;
+        canvas.width = rect.width * dpr;
+        canvas.height = rect.height * dpr;
+        const ctx = canvas.getContext("2d");
+        ctx.scale(dpr, dpr);
+
+        const w = rect.width;
+        const h = rect.height;
+        const cx = w / 2;
+        const cy = h / 2;
+        const maxR = Math.min(w, h) * 0.42;
+
+        ctx.clearRect(0, 0, w, h);
+
+        [0.5, 1.0, 1.5].forEach((gRing) => {
+          const r = (gRing / 1.5) * maxR;
+          ctx.strokeStyle = gRing === 1.0 ? "rgba(244, 63, 94, 0.45)" : "rgba(71, 85, 105, 0.4)";
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.arc(cx, cy, r, 0, Math.PI * 2);
+          ctx.stroke();
+        });
+
+        ctx.strokeStyle = "rgba(71, 85, 105, 0.45)";
+        ctx.beginPath();
+        ctx.moveTo(cx - maxR, cy);
+        ctx.lineTo(cx + maxR, cy);
+        ctx.moveTo(cx, cy - maxR);
+        ctx.lineTo(cx, cy + maxR);
+        ctx.stroke();
+
+        const px = cx + Math.max(-1.5, Math.min(1.5, gx)) / 1.5 * maxR;
+        const py = cy - Math.max(-1.5, Math.min(1.5, gy)) / 1.5 * maxR;
+
+        ctx.fillStyle = "rgba(244, 63, 94, 0.25)";
+        ctx.beginPath();
+        ctx.arc(px, py, 14, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = "#f43f5e";
+        ctx.strokeStyle = "#ffffff";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(px, py, 6.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      }
+
+      function renderSmoothGaugesLoop() {
+        const lerp = 0.28;
+        smoothCur.rpm += (smoothTarget.rpm - smoothCur.rpm) * lerp;
+        smoothCur.spd += (smoothTarget.spd - smoothCur.spd) * lerp;
+        smoothCur.bst += (smoothTarget.bst - smoothCur.bst) * lerp;
+        smoothCur.lod += (smoothTarget.lod - smoothCur.lod) * lerp;
+        smoothCur.ped += (smoothTarget.ped - smoothCur.ped) * lerp;
+        smoothCur.brk += (smoothTarget.brk - smoothCur.brk) * lerp;
+        smoothCur.str += (smoothTarget.str - smoothCur.str) * lerp;
+        smoothCur.gx  += (smoothTarget.gx  - smoothCur.gx)  * lerp;
+        smoothCur.gy  += (smoothTarget.gy  - smoothCur.gy)  * lerp;
+
+        const p = VEHICLE_PROFILES[currentModel] || VEHICLE_PROFILES.GRECALE;
+        const rpmInt = Math.round(smoothCur.rpm);
+        const spdInt = Math.round(smoothCur.spd);
+
+        const rpmValEl = document.getElementById("rpmValue");
+        const rpmBarEl = document.getElementById("rpmBar");
+        const spdValEl = document.getElementById("speedValue");
+        const bstValEl = document.getElementById("boostValue");
+        const bstBarEl = document.getElementById("boostBar");
+        const lodValEl = document.getElementById("loadValue");
+        const lodBarEl = document.getElementById("loadBar");
+        const pedValEl = document.getElementById("pedalValue");
+        const pedBarEl = document.getElementById("pedalBar");
+        const brkValEl = document.getElementById("brakeValue");
+        const brkBarEl = document.getElementById("brakeBar");
+        const strValEl = document.getElementById("steerValue");
+        const latGEl = document.getElementById("latGVal");
+        const lonGEl = document.getElementById("lonGVal");
+
+        if (rpmValEl) rpmValEl.textContent = rpmInt;
+        if (rpmBarEl) rpmBarEl.style.width = `${Math.min(100, Math.max(0, (smoothCur.rpm / p.maxRpm) * 100))}%`;
+        if (spdValEl) spdValEl.textContent = spdInt;
+
+        if (bstValEl) bstValEl.textContent = `${smoothCur.bst >= 0 ? "+" : ""}${smoothCur.bst.toFixed(2)} bar`;
+        if (bstBarEl) {
+          const bstPct = Math.max(0, Math.min(100, ((smoothCur.bst + 0.8) / (p.maxBoost + 0.8)) * 100));
+          bstBarEl.style.width = `${bstPct}%`;
+        }
+
+        if (lodValEl) lodValEl.textContent = `${Math.round(smoothCur.lod)}%`;
+        if (lodBarEl) lodBarEl.style.width = `${Math.max(0, Math.min(100, smoothCur.lod))}%`;
+
+        if (pedValEl) pedValEl.textContent = `${Math.round(smoothCur.ped)}%`;
+        if (pedBarEl) pedBarEl.style.width = `${Math.max(0, Math.min(100, smoothCur.ped))}%`;
+
+        if (brkValEl) brkValEl.textContent = `${Math.round(smoothCur.brk)}%`;
+        if (brkBarEl) brkBarEl.style.width = `${Math.max(0, Math.min(100, smoothCur.brk))}%`;
+
+        if (strValEl) strValEl.textContent = `${smoothCur.str.toFixed(1)}°`;
+        if (latGEl) latGEl.textContent = `${smoothCur.gx.toFixed(2)} G`;
+        if (lonGEl) lonGEl.textContent = `${smoothCur.gy.toFixed(2)} G`;
+
+        // シフトライト更新
+        const activeLeds = Math.round((smoothCur.rpm / p.redline) * 12);
+        for (let i = 0; i < 12; i++) {
+          const led = document.getElementById(`shiftLed_${i}`);
+          if (!led) continue;
+          if (i < activeLeds) {
+            if (i < 5) led.style.backgroundColor = "#10b981";
+            else if (i < 9) led.style.backgroundColor = "#f59e0b";
+            else led.style.backgroundColor = "#ef4444";
+          } else {
+            led.style.backgroundColor = "#0f172a";
+          }
+        }
+
+        drawGForceBall(smoothCur.gx, smoothCur.gy);
+        requestAnimationFrame(renderSmoothGaugesLoop);
+      }
+
+      function updateDashboardUI(d) {
+        smoothLastD = d;
+        const p = VEHICLE_PROFILES[currentModel] || VEHICLE_PROFILES.GRECALE;
+
+        smoothTarget.rpm = Number(d.rpm || 0);
+        smoothTarget.spd = Number(d.spd || 0);
+        smoothTarget.bst = Number(d.bst || 0);
+        smoothTarget.lod = Number(d.lod || 0);
+        smoothTarget.ped = Number(d.ped || 0);
+        smoothTarget.brk = Number(d.brk || 0);
+        smoothTarget.str = Number(d.str || 0);
+        smoothTarget.gx  = Number(d.gx  || 0);
+        smoothTarget.gy  = Number(d.gy  || 0);
+
+        if (smoothTarget.spd > peakSpeed) {
+          peakSpeed = Math.round(smoothTarget.spd);
+          const pkEl = document.getElementById("peakSpeedLbl");
+          if (pkEl) pkEl.textContent = `PEAK: ${peakSpeed} km/h`;
+        }
+
+        const totalG = Math.hypot(smoothTarget.gx, smoothTarget.gy);
+        if (totalG > maxTotalG) {
+          maxTotalG = totalG;
+          const mgEl = document.getElementById("maxGLbl");
+          if (mgEl) mgEl.textContent = `MAX: ${maxTotalG.toFixed(2)}G`;
+        }
+
+        const gearEl = document.getElementById("gearValue");
+        if (gearEl) {
+          const g = Number(d.gear || 0);
+          gearEl.textContent = g <= 0 ? "N" : String(g);
+        }
+
+        const oilEl = document.getElementById("oilTempVal");
+        const traEl = document.getElementById("transTempVal");
+        const watEl = document.getElementById("waterTempVal");
+        const iatEl = document.getElementById("iatTempVal");
+        const ignEl = document.getElementById("ignVal");
+        const afrEl = document.getElementById("afrVal");
+        const batEl = document.getElementById("batVal");
+
+        if (oilEl) oilEl.textContent = d.oil > 0 ? `${Number(d.oil).toFixed(1)} °C` : "--.- °C";
+        if (traEl) traEl.textContent = d.tra > 0 ? `${Number(d.tra).toFixed(1)} °C` : "--.- °C";
+        if (watEl) watEl.textContent = d.wat > 0 ? `${Number(d.wat).toFixed(1)} °C` : "--.- °C";
+        if (iatEl) iatEl.textContent = `${Number(d.iat || 25).toFixed(1)} °C`;
+        if (ignEl) ignEl.textContent = `${Number(d.ign || 0).toFixed(1)}°`;
+        if (afrEl) afrEl.textContent = Number(d.afr || 1.0).toFixed(2);
+        if (batEl) batEl.textContent = `${Number(d.bat || 12.6).toFixed(1)}V`;
+
+        const isZeroReset = !localDemoTimer && !arduinoSimActive && !arduinoCanOk;
+        updateTyreMonitor(
+          d.awd_f !== undefined ? d.awd_f : p.defaultFront,
+          d.lsd_l !== undefined ? d.lsd_l : 50,
+          latestTireState.tp,
+          latestTireState.tt,
+          isZeroReset
+        );
+
+        if (Number.isFinite(d.lat) && Number.isFinite(d.lng) && (d.lat !== 0 || d.lng !== 0)) {
+          lastLat = d.lat;
+          lastLng = d.lng;
+          const coordEl = document.getElementById("gpsCoordLbl");
+          if (coordEl) coordEl.textContent = `${lastLat.toFixed(6)}, ${lastLng.toFixed(6)}`;
+          updateCarOnMaps(lastLat, lastLng);
+        }
+
+        const gpsBadge = document.getElementById("gpsFixBadge");
+        if (gpsBadge) {
+          if (localDemoTimer || arduinoSimActive) {
+            gpsBadge.textContent = "FSW DEMO";
+            gpsBadge.className = "mono text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-600/60";
+          } else if (arduinoGpsFix) {
+            gpsBadge.textContent = `GPS FIX (${arduinoGpsSats}衛星)`;
+            gpsBadge.className = "mono text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-500/70";
+          } else {
+            gpsBadge.textContent = `GPS WAIT (${arduinoGpsSats}衛星)`;
+            gpsBadge.className = "mono text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-amber-950 text-amber-300 border border-amber-600/60";
+          }
+        }
+
+        processLapTelemetryPoint(d);
+      }
+
+      // ================= 7. Leaflet 衛星マップ初期化・更新 =================
+      function getTileUrl() {
+        return mapStyleMode === "satellite"
+          ? "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+          : "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png";
+      }
+
+      function createBeaconIcon() {
+        return L.divIcon({
+          className: "",
+          html: '<div class="car-beacon"></div>',
+          iconSize: [16, 16],
+          iconAnchor: [8, 8]
+        });
+      }
+
+      function initMaps() {
+        if (typeof L === "undefined") return;
+        const fswLatLngs = FSW_RAW_COORDS.map((c) => [c[0], c[1]]);
+
+        const miniEl = document.getElementById("miniLeafletMap");
+        if (miniEl && !miniMap) {
+          miniMap = L.map(miniEl, { zoomControl: false, attributionControl: false }).setView([lastLat, lastLng], 15);
+          miniTile = L.tileLayer(getTileUrl(), { maxZoom: 19 }).addTo(miniMap);
+          L.polyline(fswLatLngs, { color: "#64748b", weight: 2, opacity: 0.45 }).addTo(miniMap);
+          miniPoly = L.polyline([], { color: "#f43f5e", weight: 3.5 }).addTo(miniMap);
+          miniMarker = L.marker([lastLat, lastLng], { icon: createBeaconIcon() }).addTo(miniMap);
+        }
+
+        const recEl = document.getElementById("recorderLeafletMap");
+        if (recEl && !recMap) {
+          recMap = L.map(recEl, { zoomControl: true, attributionControl: false }).setView([35.3705, 138.9280], 15);
+          recTile = L.tileLayer(getTileUrl(), { maxZoom: 19 }).addTo(recMap);
+          recTrackBg = L.polyline(fswLatLngs, { color: "#94a3b8", weight: 3, opacity: 0.55 }).addTo(recMap);
+          if (controlLine) {
+            recSfLine = L.polyline([controlLine.pA, controlLine.pB], { color: "#10b981", weight: 5 }).addTo(recMap);
+          }
+          recLivePoly = L.polyline([], { color: "#38bdf8", weight: 3.5 }).addTo(recMap);
+          recMarker = L.marker([lastLat, lastLng], { icon: createBeaconIcon() }).addTo(recMap);
+        }
+
+        const anEl = document.getElementById("analyzerLeafletMap");
+        if (anEl && !anMap) {
+          anMap = L.map(anEl, { zoomControl: true, attributionControl: false }).setView([35.3705, 138.9280], 15);
+          anTile = L.tileLayer(getTileUrl(), { maxZoom: 19 }).addTo(anMap);
+          L.polyline(fswLatLngs, { color: "#475569", weight: 2, opacity: 0.4 }).addTo(anMap);
+          anRefPoly = L.polyline([], { color: "#10b981", weight: 3.5 }).addTo(anMap);
+          anCmpPoly = L.polyline([], { color: "#38bdf8", weight: 3.5 }).addTo(anMap);
+        }
+      }
+
+      function ensureFullMapInit() {
+        const fullEl = document.getElementById("fullLeafletMap");
+        if (!fullEl || typeof L === "undefined") return;
+        if (!fullMap) {
+          fullMap = L.map(fullEl, { zoomControl: true, attributionControl: false }).setView([lastLat, lastLng], 16);
+          fullTile = L.tileLayer(getTileUrl(), { maxZoom: 19 }).addTo(fullMap);
+          fullPoly = L.polyline(trackPoints, { color: "#f43f5e", weight: 4 }).addTo(fullMap);
+          fullMarker = L.marker([lastLat, lastLng], { icon: createBeaconIcon() }).addTo(fullMap);
+        }
+        setTimeout(() => fullMap.invalidateSize(), 120);
+      }
+
+      function updateMapTiles() {
+        const url = getTileUrl();
+        [miniTile, fullTile, recTile, anTile].forEach((t) => { if (t) t.setUrl(url); });
+        document.querySelectorAll(".map-style-btn").forEach((btn) => {
+          btn.textContent = mapStyleMode === "satellite" ? "🗺️ 地図" : "🛰️ 航空";
+        });
+      }
+
+      function updateCarOnMaps(lat, lng) {
+        const ll = [lat, lng];
+        trackPoints.push(ll);
+        if (trackPoints.length > 350) trackPoints.shift();
+
+        if (miniMarker) miniMarker.setLatLng(ll);
+        if (miniPoly) miniPoly.setLatLngs(trackPoints);
+        if (miniMap && mapFollowCar) miniMap.panTo(ll, { animate: false });
+
+        if (fullMarker) fullMarker.setLatLng(ll);
+        if (fullPoly) fullPoly.setLatLngs(trackPoints);
+        if (fullMap && mapFollowCar) fullMap.panTo(ll, { animate: false });
+
+        if (recMarker) recMarker.setLatLng(ll);
+        if (recLivePoly) recLivePoly.setLatLngs(trackPoints.slice(-160));
+      }
+
+      // ================= 8. 全22信号モニタリング & デバッグレポート =================
       function evaluateSignalPacket(raw) {
         const ts = new Date().toTimeString().split(" ")[0];
         const prof = VEHICLE_PROFILES[currentModel] || VEHICLE_PROFILES.GRECALE;
+        const isCanLive = Number(raw.c) === 1;
+        const isSimLive = Number(raw.s) === 1;
+        const allowDynamicEval = isCanLive || isSimLive;
 
         SIGNAL_DEFINITIONS.forEach((def) => {
           const st = signalTracker[def.key];
@@ -1264,11 +1836,15 @@
               st.lastUpdatedAt = ts;
               const p0 = Number(raw.tp[0]).toFixed(2);
               const t0 = Array.isArray(raw.tt) ? Number(raw.tt[0]).toFixed(1) : "--";
-              const isDefault = Math.abs(Number(raw.tp[0]) - prof.baseTpF) < 0.01 && Number(t0) === 25.0;
-              if (st.rawNum !== null && st.rawNum !== Number(p0)) st.changes += 1;
-              st.rawNum = Number(p0);
+              const isDefault = Math.abs(Number(raw.tp[0]) - prof.baseTpF) < 0.01 && Number(t0) <= 25.0;
+              if (allowDynamicEval && st.rawNum !== null && st.rawNum !== Number(p0)) st.changes += 1;
+              if (allowDynamicEval) st.rawNum = Number(p0);
               st.lastValStr = `FL:${p0}bar / ${t0}°C`;
-              st.status = isDefault ? "static" : "ok";
+              if (st.changes > 0 || (allowDynamicEval && !isDefault)) {
+                st.status = "ok";
+              } else if (st.status !== "ok") {
+                st.status = "static";
+              }
             }
             return;
           }
@@ -1278,10 +1854,13 @@
             const num = Number(val);
             st.hits += 1;
             st.lastUpdatedAt = ts;
-            if (st.rawNum !== null && Math.abs(num - st.rawNum) > 0.001) {
-              st.changes += 1;
+
+            if (allowDynamicEval) {
+              if (st.rawNum !== null && Math.abs(num - st.rawNum) > 0.001) {
+                st.changes += 1;
+              }
+              st.rawNum = num;
             }
-            st.rawNum = num;
             st.lastValStr = `${Number.isInteger(num) ? num : num.toFixed(2)} ${def.unit}`;
 
             let isStatic = false;
@@ -1291,9 +1870,9 @@
               isStatic = Math.abs(num - def.defaultVal) < 0.001;
             }
 
-            if (st.changes > 0 || !isStatic) {
+            if (st.changes > 0 || (allowDynamicEval && !isStatic)) {
               st.status = "ok";
-            } else {
+            } else if (st.status !== "ok") {
               st.status = "static";
             }
           }
@@ -1304,139 +1883,220 @@
       }
 
       function updateSignalCountsUI() {
-        let okCnt = 0, stCnt = 0, ngCnt = 0;
+        let okCnt = 0;
+        let staticCnt = 0;
+        let noneCnt = 0;
         SIGNAL_DEFINITIONS.forEach((def) => {
-          const s = signalTracker[def.key].status;
-          if (s === "ok") okCnt++;
-          else if (s === "static") stCnt++;
-          else ngCnt++;
+          const st = signalTracker[def.key];
+          if (st.status === "ok") okCnt++;
+          else if (st.status === "static") staticCnt++;
+          else noneCnt++;
         });
 
         const topBadge = document.getElementById("topSignalHealthBadge");
+        const cntAll = document.getElementById("sigCntAll");
+        const cntOk = document.getElementById("sigCntOk");
+        const cntNg = document.getElementById("sigCntNg");
+        const sumOk = document.getElementById("dbgSummaryOk");
+        const sumSt = document.getElementById("dbgSummaryStatic");
+        const sumNo = document.getElementById("dbgSummaryNone");
+
         if (topBadge) topBadge.textContent = `${okCnt}/${SIGNAL_DEFINITIONS.length}`;
-
-        const cAll = document.getElementById("sigCntAll");
-        const cOk = document.getElementById("sigCntOk");
-        const cNg = document.getElementById("sigCntNg");
-        if (cAll) cAll.textContent = SIGNAL_DEFINITIONS.length;
-        if (cOk) cOk.textContent = okCnt;
-        if (cNg) cNg.textContent = stCnt + ngCnt;
-
-        const sOk = document.getElementById("dbgSummaryOk");
-        const sSt = document.getElementById("dbgSummaryStatic");
-        const sNo = document.getElementById("dbgSummaryNone");
-        if (sOk) sOk.textContent = `${okCnt} 項目`;
-        if (sSt) sSt.textContent = `${stCnt} 項目`;
-        if (sNo) sNo.textContent = `${ngCnt} 項目`;
+        if (cntAll) cntAll.textContent = SIGNAL_DEFINITIONS.length;
+        if (cntOk) cntOk.textContent = okCnt;
+        if (cntNg) cntNg.textContent = staticCnt + noneCnt;
+        if (sumOk) sumOk.textContent = `${okCnt} 項目`;
+        if (sumSt) sumSt.textContent = `${staticCnt} 項目`;
+        if (sumNo) sumNo.textContent = `${noneCnt} 項目`;
       }
 
       function renderSignalMatrix() {
         const container = document.getElementById("signalMatrixContainer");
         if (!container) return;
-
-        const filtered = SIGNAL_DEFINITIONS.filter((def) => {
-          const st = signalTracker[def.key].status;
-          if (signalFilterMode === "ok") return st === "ok";
-          if (signalFilterMode === "ng") return st !== "ok";
-          return true;
-        });
-
-        container.innerHTML = filtered.map((def) => {
+        const rows = [];
+        SIGNAL_DEFINITIONS.forEach((def) => {
           const st = signalTracker[def.key];
-          let badgeHtml = `<span class="px-2 py-0.5 rounded bg-rose-950 text-rose-300 border border-rose-700/70 font-extrabold">❌ NONE</span>`;
-          let borderCls = "border-slate-800 bg-slate-950/80";
+          if (signalFilterMode === "ok" && st.status !== "ok") return;
+          if (signalFilterMode === "ng" && st.status === "ok") return;
+
+          let badgeHtml = `<span class="px-2 py-0.5 rounded bg-rose-950 text-rose-300 border border-rose-700/70 text-[10px] font-extrabold">❌ NONE</span>`;
+          let borderCls = "border-slate-800";
           if (st.status === "ok") {
-            badgeHtml = `<span class="px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-600/70 font-extrabold">✅ ACTIVE</span>`;
-            borderCls = "border-emerald-800/60 bg-emerald-950/15";
+            badgeHtml = `<span class="px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-600/70 text-[10px] font-extrabold">✅ ACTIVE</span>`;
+            borderCls = "border-emerald-800/60";
           } else if (st.status === "static") {
-            badgeHtml = `<span class="px-2 py-0.5 rounded bg-amber-950 text-amber-300 border border-amber-600/70 font-extrabold">⚠️ STATIC</span>`;
-            borderCls = "border-amber-800/60 bg-amber-950/15";
+            badgeHtml = `<span class="px-2 py-0.5 rounded bg-amber-950 text-amber-300 border border-amber-600/70 text-[10px] font-extrabold">⚠️ STATIC</span>`;
+            borderCls = "border-amber-800/50";
           }
 
-          return `
-            <div class="p-2.5 rounded-xl border ${borderCls} flex items-center justify-between gap-2 text-xs">
+          rows.push(`
+            <div class="p-2.5 rounded-xl bg-slate-950/90 border ${borderCls} flex items-center justify-between gap-2 text-xs">
               <div class="min-w-0">
-                <div class="flex items-center gap-2">
+                <div class="flex items-center gap-1.5">
                   <span class="font-bold text-white truncate">${def.label}</span>
-                  <span class="mono text-[10px] px-1.5 py-0.2 rounded bg-slate-900 text-slate-400 border border-slate-800">${def.shortKey}</span>
+                  <span class="mono text-[10px] text-slate-500">(${def.shortKey})</span>
                 </div>
-                <p class="mono text-[10px] text-slate-400 mt-0.5 truncate">${def.proto} • 変化:${st.changes}回</p>
+                <p class="mono text-[10px] text-slate-400 truncate mt-0.5">${def.proto} • 受信:${st.hits} / 変化:${st.changes}</p>
               </div>
-              <div class="text-right mono shrink-0">
-                <div>${badgeHtml}</div>
-                <p class="text-[11px] font-bold text-slate-200 mt-1">${escapeHtml(st.lastValStr)}</p>
+              <div class="text-right shrink-0 flex flex-col items-end gap-1">
+                ${badgeHtml}
+                <span class="mono text-[11px] font-bold text-cyan-200">${escapeHtml(st.lastValStr)}</span>
               </div>
-            </div>`;
-        }).join("");
+            </div>
+          `);
+        });
+        container.innerHTML = rows.length > 0
+          ? rows.join("")
+          : `<div class="py-8 text-center text-xs text-slate-500">該当する信号項目はありません</div>`;
       }
 
-      function saveDebugStateToStorage() {
+      function appendConsoleStream(type, text) {
+        const ts = new Date().toTimeString().split(" ")[0];
+        const entry = `[${ts}] [${type}] ${text}`;
+        debugStore.consoleLines.push(entry);
+        if (debugStore.consoleLines.length > 300) debugStore.consoleLines.shift();
+
+        if (consolePaused) return;
+        if (type === "RX_PKT" && !consoleShowRawJson) return;
+
+        const box = document.getElementById("debugTerminalStream");
+        if (!box) return;
+        const div = document.createElement("div");
+        if (type === "RX_UDS" || type === "ACK RX") div.className = "text-amber-300 font-bold";
+        else if (type === "CMD TX") div.className = "text-cyan-300";
+        else if (type === "EVENT") div.className = "text-emerald-300";
+        else div.className = "text-slate-400 break-all";
+        div.textContent = entry;
+        box.appendChild(div);
+        while (box.children.length > 140) {
+          box.removeChild(box.firstChild);
+        }
+        box.scrollTop = box.scrollHeight;
+      }
+
+      function updateDebugBoardState() {
+        const isOnline = (Date.now() - lastArduinoRxTime) < 3500 && lastArduinoRxTime > 0;
+        const pill = document.getElementById("dbgR4OnlinePill");
+        const canEl = document.getElementById("dbgCanState");
+        const simEl = document.getElementById("dbgSimState");
+        const gpsEl = document.getElementById("dbgGpsState");
+        const modEl = document.getElementById("dbgModelState");
+        const rssiEl = document.getElementById("dbgRssiState");
+        const hzEl = document.getElementById("dbgHzUptimeState");
+
+        if (pill) {
+          pill.textContent = isOnline ? "ONLINE" : "OFFLINE";
+          pill.className = isOnline
+            ? "mono text-xs font-extrabold px-2.5 py-1 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-500/70"
+            : "mono text-xs font-extrabold px-2.5 py-1 rounded-full bg-rose-950 text-rose-300 border border-rose-600/70";
+        }
+        if (canEl) {
+          const pTag = arduinoProtoTag ? ` [${arduinoProtoTag}]` : "";
+          canEl.textContent = (arduinoCanOk ? "1 (確立)" : "0 (未確立)") + pTag;
+          canEl.className = arduinoCanOk ? "text-sm text-emerald-300" : "text-sm text-rose-400";
+        }
+        if (simEl) {
+          simEl.textContent = isOnline ? (arduinoSimActive ? "1 (デモSIM)" : "0 (実車ECU)") : "--";
+        }
+        if (gpsEl) {
+          gpsEl.textContent = arduinoGpsFix ? `1 (3D測位 / ${arduinoGpsSats}衛星)` : `0 (待機 / ${arduinoGpsSats}衛星)`;
+          gpsEl.className = arduinoGpsFix ? "text-sm text-emerald-300" : "text-sm text-amber-300";
+        }
+        if (modEl) modEl.textContent = arduinoSyncedModel || "UNSYNCED";
+        if (rssiEl) rssiEl.textContent = latestRssi !== null ? `${latestRssi} dBm` : "-- dBm";
+        if (hzEl) {
+          const now = Date.now();
+          rxTimestamps = rxTimestamps.filter((t) => now - t <= 2000);
+          const hz = (rxTimestamps.length / 2).toFixed(1);
+          hzEl.textContent = `${hz}Hz / ${latestUptime}s`;
+        }
+      }
+
+      function resetDebugLogs() {
+        SIGNAL_DEFINITIONS.forEach((def) => {
+          signalTracker[def.key] = {
+            status: "none",
+            lastValStr: "未受信",
+            rawNum: null,
+            hits: 0,
+            changes: 0,
+            lastUpdatedAt: null
+          };
+        });
+        debugStore.startedAt = new Date().toISOString();
+        debugStore.vehicle = currentModel;
+        debugStore.rawPackets = [];
+        debugStore.consoleLines = [];
+        debugStore.udsResponses = [];
+        const box = document.getElementById("debugTerminalStream");
+        if (box) box.innerHTML = `<div class="text-slate-500">[LOG RESET] ${currentModel} の新規診断ログを開始しました</div>`;
+        updateSignalCountsUI();
+        renderSignalMatrix();
+        saveDebugStateToLocalStorage();
+      }
+
+      function saveDebugStateToLocalStorage() {
         try {
+          debugStore.vehicle = currentModel;
+          debugStore.totalSavedCount += 1;
           const payload = {
             savedAt: new Date().toISOString(),
             vehicle: currentModel,
-            arduinoState: {
-              canOk: arduinoCanOk,
-              simActive: arduinoSimActive,
-              gpsFix: arduinoGpsFix,
-              gpsSats: arduinoGpsSats,
-              syncedModel: arduinoSyncedModel,
-              rssi: latestRssi,
-              uptime: latestUptime,
-              totalPackets
-            },
-            signals: signalTracker,
+            tracker: signalTracker,
             udsResponses: debugStore.udsResponses.slice(-20),
-            recentRawPackets: debugStore.rawPackets.slice(-40),
-            consoleLines: debugStore.consoleLines.slice(-80)
+            recentPackets: debugStore.rawPackets.slice(-30)
           };
           localStorage.setItem(DEBUG_STORAGE_KEY, JSON.stringify(payload));
-          debugStore.totalSavedCount += 1;
           const badge = document.getElementById("dbgAutoSaveBadge");
-          if (badge) badge.textContent = `● AUTO-SAVE: ${debugStore.totalSavedCount}回保存済`;
+          if (badge) badge.textContent = `● AUTO-SAVE: ${debugStore.totalSavedCount}回`;
         } catch (e) {}
       }
 
-      function loadSavedDebugFromStorage() {
+      function restoreDebugStateFromLocalStorage() {
         try {
           const raw = localStorage.getItem(DEBUG_STORAGE_KEY);
           if (!raw) return;
           const parsed = JSON.parse(raw);
-          if (parsed && parsed.signals) {
-            Object.keys(parsed.signals).forEach((k) => {
-              if (signalTracker[k]) Object.assign(signalTracker[k], parsed.signals[k]);
+          if (parsed && parsed.vehicle === currentModel && parsed.tracker) {
+            Object.keys(parsed.tracker).forEach((k) => {
+              if (signalTracker[k]) {
+                Object.assign(signalTracker[k], parsed.tracker[k]);
+              }
             });
-            updateSignalCountsUI();
-            renderSignalMatrix();
+            if (Array.isArray(parsed.udsResponses)) {
+              debugStore.udsResponses = parsed.udsResponses;
+            }
           }
-          if (parsed && Array.isArray(parsed.udsResponses)) {
-            debugStore.udsResponses = parsed.udsResponses;
-          }
-          appendDebugConsoleLine("RESTORE", `前回の自動保存ログを復元しました (${parsed.savedAt || ""})`, "text-emerald-300");
         } catch (e) {}
       }
 
-      function buildGeminiFeedbackReport() {
+      function buildGeminiReportText() {
+        const nowStr = new Date().toLocaleString("ja-JP");
+        const prof = VEHICLE_PROFILES[currentModel] || VEHICLE_PROFILES.GRECALE;
         const okList = [];
         const staticList = [];
         const noneList = [];
 
         SIGNAL_DEFINITIONS.forEach((def) => {
           const st = signalTracker[def.key];
-          const item = `- ${def.label} (${def.shortKey} / ${def.proto}): ${st.lastValStr} [受信:${st.hits}回, 変化:${st.changes}回]`;
-          if (st.status === "ok") okList.push(item);
-          else if (st.status === "static") staticList.push(item);
-          else noneList.push(item);
+          const line = `- ${def.label} (${def.shortKey} / ${def.proto}): ${st.lastValStr} [受信:${st.hits}回, 変化:${st.changes}回]`;
+          if (st.status === "ok") okList.push(line);
+          else if (st.status === "static") staticList.push(line);
+          else noneList.push(line);
         });
+
+        const udsText = debugStore.udsResponses.length > 0
+          ? debugStore.udsResponses.slice(-5).join("\n")
+          : "未実行または応答なし";
 
         return [
           "=== 実車テレメトリー デバッグフィードバックレポート ===",
-          `日時: ${new Date().toLocaleString("ja-JP")}`,
-          `選択車種プロファイル: ${currentModel} (${VEHICLE_PROFILES[currentModel]?.name || ""})`,
-          `Arduino同期車種(m): ${arduinoSyncedModel || "UNSYNCED"}`,
+          `日時: ${nowStr}`,
+          `選択車種プロファイル: ${currentModel} (${prof.name})`,
+          `Arduino同期車種(m): ${arduinoSyncedModel || "未同期"} / プロトコル: ${arduinoProtoTag || "--"}`,
           `CAN通信状態(c): ${arduinoCanOk ? "1 (確立)" : "0 (未確立)"} / 動作モード(s): ${arduinoSimActive ? "1 (デモ)" : "0 (実車)"}`,
           `GPS測位(gf): ${arduinoGpsFix ? "1 (3D測位)" : "0 (待機中)"} / 捕捉衛星数(gs): ${arduinoGpsSats}`,
-          `累計受信パケット: ${totalPackets} pkts / Wi-Fi RSSI: ${latestRssi ?? "--"} dBm`,
+          `累計受信パケット: ${totalPackets} pkts / Wi-Fi RSSI: ${latestRssi !== null ? latestRssi + " dBm" : "--"}`,
           "",
           `[1. 取得成功・実測変化あり (${okList.length}項目)]`,
           okList.length ? okList.join("\n") : "なし",
@@ -1448,7 +2108,7 @@
           noneList.length ? noneList.join("\n") : "なし",
           "",
           "[4. UDSスキャン応答履歴]",
-          debugStore.udsResponses.length ? debugStore.udsResponses.join("\n") : "未実行または応答なし",
+          udsText,
           "",
           "[5. 直近生JSONサンプル]",
           latestRawJsonStr || "なし"
@@ -1456,282 +2116,404 @@
       }
 
       function copyGeminiReport() {
-        const report = buildGeminiFeedbackReport();
+        const text = buildGeminiReportText();
         const box = document.getElementById("dbgFeedbackBox");
         const ta = document.getElementById("dbgReportTextarea");
-        const title = document.getElementById("dbgFeedbackTitle");
         if (box && ta) {
-          ta.value = report;
+          ta.value = text;
           box.classList.remove("hidden");
           ta.focus();
           ta.select();
           try { document.execCommand("copy"); } catch (e) {}
         }
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText(report).then(() => {
-            if (title) title.textContent = "✓ クリップボードへコピー完了！そのままGeminiへ貼り付けて送信してください";
-          }).catch(() => {
-            if (title) title.textContent = "下のテキスト枠を長押しして「すべて選択 → コピー」してください";
-          });
-        }
+        appendLog("Gemini用フィードバックレポートを生成・コピーしました");
       }
 
-      function exportFullDebugJson() {
-        saveDebugStateToStorage();
-        const fullObj = {
+      function exportDebugJson() {
+        const dump = {
           exportedAt: new Date().toISOString(),
-          vehicleProfile: currentModel,
-          arduinoState: {
-            canOk: arduinoCanOk,
-            simActive: arduinoSimActive,
-            gpsFix: arduinoGpsFix,
-            gpsSats: arduinoGpsSats,
-            syncedModel: arduinoSyncedModel,
-            rssi: latestRssi,
-            uptime: latestUptime,
-            totalPackets
-          },
-          signals: signalTracker,
+          selectedProfile: currentModel,
+          arduinoSyncedModel,
+          arduinoProtoTag,
+          canOk: arduinoCanOk,
+          gpsFix: arduinoGpsFix,
+          gpsSats: arduinoGpsSats,
+          signalSummary: signalTracker,
           udsResponses: debugStore.udsResponses,
-          rawPackets: debugStore.rawPackets,
-          consoleLines: debugStore.consoleLines
+          consoleLogs: debugStore.consoleLines,
+          rawPackets: debugStore.rawPackets
         };
-        exportFileDownload(JSON.stringify(fullObj, null, 2), `debug_report_${currentModel}_${Date.now()}.json`, "application/json");
-        appendDebugConsoleLine("EXPORT", "全デバッグJSONファイルをダウンロード保存しました", "text-indigo-300");
+        downloadTextFile(`telemetry_debug_${currentModel}_${Date.now()}.json`, JSON.stringify(dump, null, 2), "application/json");
+        appendLog("全デバッグJSONファイルを保存しました");
       }
 
-      function resetDebugLogs() {
-        SIGNAL_DEFINITIONS.forEach((def) => {
-          Object.assign(signalTracker[def.key], {
-            status: "none",
-            lastValStr: "未受信",
-            rawNum: null,
-            hits: 0,
-            changes: 0,
-            lastUpdatedAt: null
-          });
-        });
-        debugStore.rawPackets = [];
-        debugStore.consoleLines = [];
-        debugStore.udsResponses = [];
-        debugStore.totalSavedCount = 0;
-        localStorage.removeItem(DEBUG_STORAGE_KEY);
-        updateSignalCountsUI();
-        renderSignalMatrix();
-        const stream = document.getElementById("debugTerminalStream");
-        if (stream) stream.innerHTML = `<div class="text-slate-500">[RESET] ログと信号診断カウンターを初期化しました</div>`;
+      // ================= 9. FSW ローカルデモ走行エンジン =================
+      function toggleLocalDemo() {
+        if (localDemoTimer) stopLocalDemo();
+        else startLocalDemo();
       }
 
-      // ================= 5. 富士スピードウェイ距離テーブル生成 =================
-      function buildFswTrack() {
-        let cumDist = 0;
-        const pts = FSW_RAW_COORDS.map((c, idx) => {
-          if (idx > 0) {
-            cumDist += haversineM(FSW_RAW_COORDS[idx - 1][0], FSW_RAW_COORDS[idx - 1][1], c[0], c[1]);
-          }
-          return { lat: c[0], lng: c[1], rawD: cumDist };
-        });
-        const scale = FSW_LENGTH_M / (cumDist || 1);
-        fswNodes = pts.map((p, idx) => {
-          const prev = pts[(idx - 1 + pts.length) % pts.length];
-          const next = pts[(idx + 1) % pts.length];
-          const d1 = Math.max(1, haversineM(prev.lat, prev.lng, p.lat, p.lng) * scale);
-          const d2 = Math.max(1, haversineM(p.lat, p.lng, next.lat, next.lng) * scale);
-          const v1x = (p.lng - prev.lng) * Math.cos(p.lat * Math.PI / 180) * 111320;
-          const v1y = (p.lat - prev.lat) * 110540;
-          const v2x = (next.lng - p.lng) * Math.cos(p.lat * Math.PI / 180) * 111320;
-          const v2y = (next.lat - p.lat) * 110540;
-          const cross = (v1x * v2y - v1y * v2x) / (d1 * d2);
-          const dot = Math.max(-1, Math.min(1, (v1x * v2x + v1y * v2y) / (d1 * d2)));
-          const angle = Math.acos(dot) * (cross >= 0 ? 1 : -1);
-          const curvature = angle / ((d1 + d2) * 0.5);
-          return { lat: p.lat, lng: p.lng, distM: p.rawD * scale, curvature };
-        });
-        resetControlLineToFsw();
-      }
-
-      function resetControlLineToFsw() {
-        if (!fswNodes || fswNodes.length < 2) return;
-        const p0 = fswNodes[0];
-        const p1 = fswNodes[1];
-        const dx = (p1.lng - p0.lng) * Math.cos(p0.lat * Math.PI / 180);
-        const dy = (p1.lat - p0.lat);
-        const len = Math.hypot(dx, dy) || 1;
-        const nx = -dy / len;
-        const ny = dx / len;
-        const halfW = 0.00022;
-        controlLine = {
-          p1: { lat: p0.lat - ny * halfW, lng: p0.lng - (nx * halfW) / Math.cos(p0.lat * Math.PI / 180) },
-          p2: { lat: p0.lat + ny * halfW, lng: p0.lng + (nx * halfW) / Math.cos(p0.lat * Math.PI / 180) }
-        };
-        if (recSfLine && controlLine) {
-          recSfLine.setLatLngs([[controlLine.p1.lat, controlLine.p1.lng], [controlLine.p2.lat, controlLine.p2.lng]]);
+      function startLocalDemo() {
+        if (localDemoTimer) return;
+        demoDistM = 4150;
+        demoPrevSpd = 120;
+        localDemoTimer = setInterval(stepLocalDemo, 100);
+        const btn = document.getElementById("demoToggleBtn");
+        const lapBtn = document.getElementById("lapPageDemoBtn");
+        if (btn) {
+          btn.textContent = "ON";
+          btn.className = "px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-600 text-white border border-emerald-400";
         }
+        if (lapBtn) lapBtn.textContent = "⏹ デモ停止";
+        appendLog("FSW本コース(4,563m) ローカルデモ走行を開始");
       }
 
-      function setControlLineAtCurrentPos() {
-        const halfW = 0.00022;
-        controlLine = {
-          p1: { lat: lastLat, lng: lastLng - halfW },
-          p2: { lat: lastLat, lng: lastLng + halfW }
-        };
-        if (recSfLine) {
-          recSfLine.setLatLngs([[controlLine.p1.lat, controlLine.p1.lng], [controlLine.p2.lat, controlLine.p2.lng]]);
+      function stopLocalDemo() {
+        if (localDemoTimer) {
+          clearInterval(localDemoTimer);
+          localDemoTimer = null;
         }
-        showLapToast(`📍 現在地 (${lastLat.toFixed(5)}, ${lastLng.toFixed(5)}) にS/Fラインを設定しました`);
+        const btn = document.getElementById("demoToggleBtn");
+        const lapBtn = document.getElementById("lapPageDemoBtn");
+        if (btn) {
+          btn.textContent = "OFF";
+          btn.className = "px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-800 text-slate-300 border border-slate-700";
+        }
+        if (lapBtn) lapBtn.textContent = "▶ FSWデモ走行";
+        appendLog("ローカルデモ走行を停止");
       }
 
-      function getFswStateAtDist(distM) {
-        const d = ((distM % FSW_LENGTH_M) + FSW_LENGTH_M) % FSW_LENGTH_M;
+      function stepLocalDemo() {
+        if (fswNodes.length === 0) return;
+        const p = VEHICLE_PROFILES[currentModel] || VEHICLE_PROFILES.GRECALE;
+        const dt = 0.1 * demoSpeedMult;
+
         let idx = 0;
-        for (let i = 0; i < fswNodes.length - 1; i++) {
-          if (d >= fswNodes[i].distM && d <= fswNodes[i + 1].distM) {
+        for (let i = 0; i < fswNodes.length; i++) {
+          const nxtD = i + 1 < fswNodes.length ? fswNodes[i + 1].distM : FSW_LENGTH_M;
+          if (demoDistM >= fswNodes[i].distM && demoDistM < nxtD) {
             idx = i;
             break;
           }
         }
-        const n1 = fswNodes[idx];
-        const n2 = fswNodes[(idx + 1) % fswNodes.length];
-        const span = (n2.distM > n1.distM) ? (n2.distM - n1.distM) : (FSW_LENGTH_M - n1.distM);
-        const r = Math.max(0, Math.min(1, (d - n1.distM) / (span || 1)));
+        const nxt = (idx + 1) % fswNodes.length;
+        const segStart = fswNodes[idx].distM;
+        const segEnd = nxt === 0 ? FSW_LENGTH_M : fswNodes[nxt].distM;
+        const ratio = Math.max(0, Math.min(1, (demoDistM - segStart) / Math.max(1, segEnd - segStart)));
+
+        const tgtSpd = fswNodes[idx].targetSpd + (fswNodes[nxt].targetSpd - fswNodes[idx].targetSpd) * ratio;
+        const spd = demoPrevSpd * 0.45 + tgtSpd * 0.55;
+        const accel = (spd - demoPrevSpd) / Math.max(0.05, dt);
+        demoPrevSpd = spd;
+
+        const brk = accel < -8 ? Math.min(100, Math.abs(accel) * 3.2) : 0;
+        const ped = brk > 5 ? 0 : Math.min(100, Math.max(18, 65 + accel * 2.5));
+        const gear = spd < 75 ? 2 : spd < 120 ? 3 : spd < 168 ? 4 : spd < 216 ? 5 : spd < 262 ? 6 : 7;
+        const rpm = Math.min(p.maxRpm, Math.round(3200 + ((spd % 48) / 48) * (p.redline - 3000)));
+        const bst = ped > 15 ? (ped / 100) * p.maxBoost : -0.58;
+        const vMs = spd / 3.6;
+        const curv = fswNodes[idx].curv + (fswNodes[nxt].curv - fswNodes[idx].curv) * ratio;
+        const gx = Math.max(-1.45, Math.min(1.45, -(vMs * vMs * curv) / 9.81));
+        const gy = brk > 5 ? -Math.min(1.35, brk / 75) : Math.min(0.75, (ped / 100) * 0.55);
+
+        for (let w = 0; w < 4; w++) {
+          simTireTemps[w] = Math.min(98, Math.max(42, simTireTemps[w] + (Math.abs(gx) * 0.12 + (brk / 100) * 0.08 - 0.03) * dt));
+          const cold = w < 2 ? p.baseTpF : p.baseTpR;
+          latestTireState.tt[w] = simTireTemps[w];
+          latestTireState.tp[w] = cold * ((simTireTemps[w] + 273.15) / 298.15);
+        }
+
+        const lat = fswNodes[idx].lat + (fswNodes[nxt].lat - fswNodes[idx].lat) * ratio;
+        const lng = fswNodes[idx].lng + (fswNodes[nxt].lng - fswNodes[idx].lng) * ratio;
+
+        demoDistM += vMs * dt;
+        if (demoDistM >= FSW_LENGTH_M) {
+          demoDistM -= FSW_LENGTH_M;
+          demoLapSeed++;
+        }
+
+        updateDashboardUI({
+          rpm, spd, gear, bst, lod: 20 + ped * 0.78, ped, thr: ped * 0.96, brk,
+          oil: 103.5, tra: 91.2, wat: 89.5, iat: 31.0, ign: 16.5, afr: ped > 80 ? 0.85 : 1.0, bat: 14.2,
+          str: gx * 65, awd_f: p.isRwdOnly ? 0 : p.defaultFront + (ped > 60 ? 10 : 0),
+          lsd_l: Math.round(50 + gx * 18), gx, gy, lat, lng
+        });
+      }
+
+      // ================= 10. ラップ計測 & 複数ラップ比較分析 =================
+      function initDefaultRepoSession() {
+        const sampleA = buildSyntheticFswSession("FSW_REF_A", "GT2 Stradale (基準ベスト)", 106.420, 1.0);
+        const sampleB = buildSyntheticFswSession("FSW_CMP_B", "GT2 Stradale (比較走行)", 108.150, 0.97);
+        sessionsRepo = [sampleA, sampleB];
+        refreshAnalyzerSelectors();
+      }
+
+      function buildSyntheticFswSession(id, label, lapTimeSec, paceFactor) {
+        const prof = VEHICLE_PROFILES[currentModel] || VEHICLE_PROFILES.GT2_STRADALE;
+        const pts = [];
+        const steps = 160;
+        let tAcc = 0;
+        for (let i = 0; i <= steps; i++) {
+          const dist = (i / steps) * FSW_LENGTH_M;
+          const nodeIdx = Math.min(fswNodes.length - 1, Math.floor((i / steps) * fswNodes.length));
+          const n = fswNodes[nodeIdx] || { lat: 35.3717, lng: 138.9267, targetSpd: 180, curv: 0 };
+          const spd = Math.round(n.targetSpd * paceFactor);
+          const rpm = Math.min(prof.maxRpm, Math.round(3500 + (spd / 290) * (prof.redline - 3500)));
+          const gx = Math.max(-1.4, Math.min(1.4, -((spd / 3.6) ** 2 * n.curv) / 9.81));
+          pts.push({ distM: dist, timeSec: tAcc, spd, rpm, gx, lat: n.lat, lng: n.lng });
+          tAcc += lapTimeSec / steps;
+        }
         return {
-          lat: n1.lat + (n2.lat - n1.lat) * r,
-          lng: n1.lng + (n2.lng - n1.lng) * r,
-          distM: d,
-          curvature: n1.curvature + (n2.curvature - n1.curvature) * r
+          id,
+          name: label,
+          vehicle: prof.name,
+          laps: [{
+            lapNo: 1,
+            timeSec: lapTimeSec,
+            s1: lapTimeSec * 0.34,
+            s2: lapTimeSec * 0.35,
+            s3: lapTimeSec * 0.31,
+            topSpd: Math.max(...pts.map((p) => p.spd)),
+            points: pts
+          }]
         };
       }
 
-      function projectToFswDist(lat, lng) {
-        let bestDist = 0;
-        let minErr = Infinity;
-        for (let i = 0; i < fswNodes.length; i++) {
-          const err = haversineM(lat, lng, fswNodes[i].lat, fswNodes[i].lng);
-          if (err < minErr) {
-            minErr = err;
-            bestDist = fswNodes[i].distM;
+      function startTimingSession() {
+        activeRecSession = {
+          id: `REC_${Date.now()}`,
+          name: `実測セッション (${new Date().toTimeString().slice(0, 5)})`,
+          vehicle: (VEHICLE_PROFILES[currentModel] || VEHICLE_PROFILES.GRECALE).name,
+          isPrepLap: true,
+          lapNo: 0,
+          lapStartMs: performance.now(),
+          lapDistM: 0,
+          s1Time: null,
+          s2Time: null,
+          currentPoints: [],
+          laps: []
+        };
+        recPrevLat = lastLat;
+        recPrevLng = lastLng;
+
+        const badge = document.getElementById("recStateBadge");
+        const startBtn = document.getElementById("btnStartTiming");
+        const stopBtn = document.getElementById("btnStopTiming");
+        const dot = document.getElementById("topLapRecDot");
+        if (badge) {
+          badge.textContent = "RECORDING (PREP)";
+          badge.className = "mono text-xs font-extrabold px-2.5 py-1 rounded-full bg-amber-950 text-amber-300 border border-amber-500/70";
+        }
+        if (startBtn) startBtn.disabled = true;
+        if (stopBtn) {
+          stopBtn.disabled = false;
+          stopBtn.className = "py-3 px-4 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-black text-sm shadow-lg active:scale-95 transition";
+        }
+        if (dot) dot.className = "w-2 h-2 rounded-full bg-emerald-400 animate-ping pointer-events-none";
+        showLapToast("ラップ計測を開始しました（S/Fライン通過でLAP 1計測へ自動移行）");
+      }
+
+      function stopTimingSession() {
+        if (!activeRecSession) return;
+        if (activeRecSession.laps.length > 0) {
+          sessionsRepo.unshift(activeRecSession);
+          refreshAnalyzerSelectors();
+        }
+        activeRecSession = null;
+        const badge = document.getElementById("recStateBadge");
+        const startBtn = document.getElementById("btnStartTiming");
+        const stopBtn = document.getElementById("btnStopTiming");
+        const dot = document.getElementById("topLapRecDot");
+        if (badge) {
+          badge.textContent = "STANDBY";
+          badge.className = "mono text-xs font-extrabold px-2.5 py-1 rounded-full bg-slate-800 text-slate-300 border border-slate-700";
+        }
+        if (startBtn) startBtn.disabled = false;
+        if (stopBtn) {
+          stopBtn.disabled = true;
+          stopBtn.className = "py-3 px-4 rounded-xl bg-slate-800 text-slate-500 border border-slate-700 font-black text-sm transition disabled:opacity-50";
+        }
+        if (dot) dot.className = "w-2 h-2 rounded-full bg-white/80 pointer-events-none";
+        switchLapTab("analyzer");
+      }
+
+      function segmentsIntersect(a1, a2, b1, b2) {
+        const ccw = (p1, p2, p3) => (p3[0] - p1[0]) * (p2[1] - p1[1]) > (p2[0] - p1[0]) * (p3[1] - p1[1]);
+        return (ccw(a1, b1, b2) !== ccw(a2, b1, b2)) && (ccw(a1, a2, b1) !== ccw(a1, a2, b2));
+      }
+
+      function processLapTelemetryPoint(d) {
+        const miniSpd = document.getElementById("recMiniSpdGear");
+        const liveG = document.getElementById("recLiveG");
+        const livePed = document.getElementById("recLivePedals");
+        if (miniSpd) miniSpd.textContent = `${Math.round(d.spd || 0)} km/h / ${d.gear > 0 ? d.gear : "N"}`;
+        if (liveG) liveG.textContent = `${Number(d.gx || 0).toFixed(2)} / ${Number(d.gy || 0).toFixed(2)}G`;
+        if (livePed) livePed.textContent = `${Math.round(d.ped || 0)}% / ${Math.round(d.brk || 0)}%`;
+
+        if (!activeRecSession) return;
+        const now = performance.now();
+        const elapsedSec = (now - activeRecSession.lapStartMs) / 1000;
+
+        if (recPrevLat !== null && recPrevLng !== null) {
+          const stepM = haversineM(recPrevLat, recPrevLng, lastLat, lastLng);
+          if (stepM < 120) activeRecSession.lapDistM += stepM;
+
+          const crossed = controlLine &&
+            segmentsIntersect([recPrevLat, recPrevLng], [lastLat, lastLng], controlLine.pA, controlLine.pB) &&
+            elapsedSec > 8.0;
+
+          if (crossed) {
+            if (!activeRecSession.isPrepLap && activeRecSession.currentPoints.length > 10) {
+              const s3 = activeRecSession.s2Time ? (elapsedSec - activeRecSession.s2Time) : elapsedSec * 0.31;
+              const topSpd = Math.max(...activeRecSession.currentPoints.map((pt) => pt.spd));
+              activeRecSession.laps.push({
+                lapNo: activeRecSession.lapNo,
+                timeSec: elapsedSec,
+                s1: activeRecSession.s1Time || elapsedSec * 0.34,
+                s2: activeRecSession.s2Time ? (activeRecSession.s2Time - (activeRecSession.s1Time || 0)) : elapsedSec * 0.35,
+                s3,
+                topSpd,
+                points: activeRecSession.currentPoints.slice()
+              });
+              renderRecordedLapsTable();
+            }
+            activeRecSession.isPrepLap = false;
+            activeRecSession.lapNo += 1;
+            activeRecSession.lapStartMs = now;
+            activeRecSession.lapDistM = 0;
+            activeRecSession.s1Time = null;
+            activeRecSession.s2Time = null;
+            activeRecSession.currentPoints = [];
+            const badge = document.getElementById("recStateBadge");
+            if (badge) {
+              badge.textContent = `LAP ${activeRecSession.lapNo}`;
+              badge.className = "mono text-xs font-extrabold px-2.5 py-1 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-500/70";
+            }
           }
         }
-        return { distM: bestDist, onTrack: minErr < 180 };
-      }
+        recPrevLat = lastLat;
+        recPrevLng = lastLng;
 
-      function getCornerNameAtDist(distM) {
-        const c = FSW_CORNERS.find((item) => distM >= item.startM && distM <= item.endM);
-        return c ? c.name : (distM < 460 || distM > 4400 ? "ホームストレート (1,475m)" : "バックストレート区間");
-      }
-
-      // ================= 6. タイヤ温度カラー＆4輪描画ロジック =================
-      function getTyreHeatStyle(tempC) {
-        if (!Number.isFinite(tempC) || tempC <= 0.1) {
-          return {
-            gradient: "linear-gradient(180deg, #334155, #1e293b)",
-            border: "rgba(51, 65, 85, 0.85)",
-            glow: "none",
-            textColor: "#94a3b8"
-          };
-        }
-        const t = Math.max(35, Math.min(105, tempC));
-        const ratio = (t - 35) / 70;
-        const hue = Math.round(135 * (1 - ratio));
-        const topHue = Math.min(145, hue + 12);
-        const botHue = Math.max(0, hue - 10);
-        return {
-          gradient: `linear-gradient(180deg, hsl(${topHue}, 88%, 48%), hsl(${botHue}, 92%, 40%))`,
-          border: `hsla(${hue}, 90%, 56%, 0.72)`,
-          glow: `0 0 14px hsla(${hue}, 90%, 50%, 0.25)`,
-          textColor: `hsl(${hue}, 92%, 68%)`
-        };
-      }
-
-      function renderFourWheelMonitor(awdFront, lsdLeft, lsdRight, tpArr, ttArr, isZeroMode) {
-        const prof = VEHICLE_PROFILES[currentModel] || VEHICLE_PROFILES.GRECALE;
-        const splitLbl = document.getElementById("torqueSplitLbl");
-
-        if (isZeroMode) {
-          if (splitLbl) splitLbl.textContent = "F 0% : R 0%";
-          ["FL", "FR", "RL", "RR"].forEach((pos) => {
-            const trqEl = document.getElementById(`trq${pos}`);
-            const tpEl = document.getElementById(`tp${pos}`);
-            const ttEl = document.getElementById(`tt${pos}`);
-            const pillEl = document.getElementById(`tyrePill${pos}`);
-            const cardEl = document.getElementById(`tyreCard${pos}`);
-            const style = getTyreHeatStyle(0);
-            if (trqEl) trqEl.textContent = "0%";
-            if (tpEl) {
-              tpEl.innerHTML = `0.00 <span class="text-[9px] text-slate-400 font-normal">bar</span>`;
-              tpEl.className = "text-xs font-black text-slate-400 mt-0.5";
-            }
-            if (ttEl) {
-              ttEl.textContent = "0.0°C";
-              ttEl.style.color = style.textColor;
-            }
-            if (pillEl) pillEl.style.background = style.gradient;
-            if (cardEl) {
-              cardEl.style.borderColor = style.border;
-              cardEl.style.boxShadow = style.glow;
-            }
+        if (!activeRecSession.isPrepLap) {
+          if (activeRecSession.lapDistM >= FSW_SECTORS_M[0] && !activeRecSession.s1Time) {
+            activeRecSession.s1Time = elapsedSec;
+          }
+          if (activeRecSession.lapDistM >= FSW_SECTORS_M[1] && !activeRecSession.s2Time) {
+            activeRecSession.s2Time = elapsedSec;
+          }
+          activeRecSession.currentPoints.push({
+            distM: activeRecSession.lapDistM,
+            timeSec: elapsedSec,
+            spd: Math.round(d.spd || 0),
+            rpm: Math.round(d.rpm || 0),
+            gx: Number(d.gx || 0),
+            lat: lastLat,
+            lng: lastLng
           });
-          const lEl = document.getElementById("lsdLeftVal");
-          const rEl = document.getElementById("lsdRightVal");
-          if (lEl) lEl.textContent = "0%";
-          if (rEl) rEl.textContent = "0%";
-          drawChassisDiagram(0, 0, 0);
-          return;
         }
 
-        const fPct = prof.isRwdOnly ? 0 : Math.max(0, Math.min(50, Math.round(awdFront)));
-        const rPct = 100 - fPct;
-        if (splitLbl) splitLbl.textContent = `F ${fPct}% : R ${rPct}%`;
+        const lbl = document.getElementById("recLapLabel");
+        const distEl = document.getElementById("recLiveDist");
+        const timeEl = document.getElementById("recCurrentTime");
+        const smpEl = document.getElementById("recSampleCount");
+        if (lbl) lbl.textContent = activeRecSession.isPrepLap ? "PREP LAP (S/F通過待ち)" : `LAP ${activeRecSession.lapNo}`;
+        if (distEl) distEl.textContent = `${Math.round(activeRecSession.lapDistM)} m / ${FSW_LENGTH_M} m`;
+        if (timeEl) timeEl.textContent = formatLapTime(elapsedSec);
+        if (smpEl) smpEl.textContent = activeRecSession.currentPoints.length;
+      }
 
-        const flTrq = Math.round(fPct * 0.5);
-        const frTrq = fPct - flTrq;
-        const rlTrq = Math.round(rPct * (lsdLeft / 100));
-        const rrTrq = rPct - rlTrq;
-        const trqs = [flTrq, frTrq, rlTrq, rrTrq];
-        const baseP = [prof.baseTpF, prof.baseTpF, prof.baseTpR, prof.baseTpR];
+      function renderRecordedLapsTable() {
+        const tbody = document.getElementById("recLapTableBody");
+        const cntLbl = document.getElementById("recLapCountLbl");
+        const bestEl = document.getElementById("recBestLap");
+        const lastEl = document.getElementById("recLastLap");
+        if (!tbody || !activeRecSession) return;
+        const laps = activeRecSession.laps;
+        if (cntLbl) cntLbl.textContent = `${laps.length} Laps`;
+        if (laps.length === 0) return;
 
-        ["FL", "FR", "RL", "RR"].forEach((pos, i) => {
-          const pVal = Number(tpArr[i]) || baseP[i];
-          const tVal = Number(ttArr[i]) || 42.0;
-          const style = getTyreHeatStyle(tVal);
-          const lowPress = pVal < baseP[i] - 0.30;
+        const bestSec = Math.min(...laps.map((l) => l.timeSec));
+        const lastLap = laps[laps.length - 1];
+        if (bestEl) bestEl.textContent = formatLapTime(bestSec);
+        if (lastEl) lastEl.textContent = formatLapTime(lastLap.timeSec);
 
-          const trqEl = document.getElementById(`trq${pos}`);
-          const tpEl = document.getElementById(`tp${pos}`);
-          const ttEl = document.getElementById(`tt${pos}`);
-          const pillEl = document.getElementById(`tyrePill${pos}`);
-          const cardEl = document.getElementById(`tyreCard${pos}`);
+        tbody.innerHTML = laps.map((l) => `
+          <tr>
+            <td class="py-1.5 px-2 font-bold text-cyan-300">L${l.lapNo}</td>
+            <td class="py-1.5 px-2 font-bold">${formatLapTime(l.timeSec)}</td>
+            <td class="py-1.5 px-2 text-amber-300">${formatDelta(l.timeSec - bestSec)}</td>
+            <td class="py-1.5 px-2 text-right">${l.topSpd} km/h</td>
+          </tr>
+        `).join("");
+      }
 
-          if (trqEl) trqEl.textContent = `${trqs[i]}%`;
-          if (tpEl) {
-            tpEl.innerHTML = `${pVal.toFixed(2)} <span class="text-[9px] text-slate-400 font-normal">bar</span>`;
-            tpEl.className = lowPress ? "text-xs font-black text-rose-400 mt-0.5" : "text-xs font-black text-white mt-0.5";
-          }
-          if (ttEl) {
-            ttEl.textContent = `${tVal.toFixed(1)}°C`;
-            ttEl.style.color = style.textColor;
-          }
-          if (pillEl) pillEl.style.background = style.gradient;
-          if (cardEl) {
-            cardEl.style.borderColor = style.border;
-            cardEl.style.boxShadow = style.glow;
-          }
+      function refreshAnalyzerSelectors() {
+        const refSel = document.getElementById("selectRefLap");
+        const cmpSel = document.getElementById("selectCmpLap");
+        const repoCnt = document.getElementById("repoSessionCount");
+        const repoList = document.getElementById("sessionRepoList");
+        if (!refSel || !cmpSel) return;
+
+        const options = [];
+        sessionsRepo.forEach((sess, sIdx) => {
+          sess.laps.forEach((lap, lIdx) => {
+            options.push({
+              val: `${sIdx}:${lIdx}`,
+              label: `${sess.name} - Lap ${lap.lapNo} (${formatLapTime(lap.timeSec)})`
+            });
+          });
         });
 
-        const lEl = document.getElementById("lsdLeftVal");
-        const rEl = document.getElementById("lsdRightVal");
-        if (lEl) lEl.textContent = `${Math.round(lsdLeft)}%`;
-        if (rEl) rEl.textContent = `${Math.round(lsdRight)}%`;
+        refSel.innerHTML = options.map((o) => `<option value="${o.val}">${escapeHtml(o.label)}</option>`).join("");
+        cmpSel.innerHTML = options.map((o, idx) => `<option value="${o.val}" ${idx === 1 ? "selected" : ""}>${escapeHtml(o.label)}</option>`).join("");
 
-        drawChassisDiagram(fPct, lsdLeft, lsdRight);
+        if (repoCnt) repoCnt.textContent = `${sessionsRepo.length} Sessions`;
+        if (repoList) {
+          repoList.innerHTML = sessionsRepo.map((s) => `<span class="px-2 py-0.5 rounded bg-slate-900 border border-slate-700 text-slate-300">${escapeHtml(s.name)} (${s.laps.length}L)</span>`).join("");
+        }
+        renderAnalyzerComparison();
       }
 
-      // ================= 7. Canvas描画 (シャシー / Gフォース) =================
-      function drawChassisDiagram(frontPct, lsdLeft, lsdRight) {
-        const canvas = document.getElementById("chassisCanvas");
+      function getSelectedLapObj(selectId) {
+        const sel = document.getElementById(selectId);
+        if (!sel || !sel.value) return null;
+        const [sIdx, lIdx] = sel.value.split(":").map(Number);
+        const sess = sessionsRepo[sIdx];
+        if (!sess || !sess.laps[lIdx]) return null;
+        return { sess, lap: sess.laps[lIdx] };
+      }
+
+      function renderAnalyzerComparison() {
+        const refObj = getSelectedLapObj("selectRefLap");
+        const cmpObj = getSelectedLapObj("selectCmpLap");
+        if (!refObj || !cmpObj) return;
+
+        const rLap = refObj.lap;
+        const cLap = cmpObj.lap;
+        document.getElementById("anRefTime").textContent = formatLapTime(rLap.timeSec);
+        document.getElementById("anRefMeta").textContent = refObj.sess.name;
+        document.getElementById("anCmpTime").textContent = formatLapTime(cLap.timeSec);
+        document.getElementById("anCmpMeta").textContent = cmpObj.sess.name;
+        document.getElementById("anTotalDelta").textContent = formatDelta(cLap.timeSec - rLap.timeSec);
+        document.getElementById("anSectorDeltas").textContent =
+          `S1 ${formatDelta(cLap.s1 - rLap.s1)} / S2 ${formatDelta(cLap.s2 - rLap.s2)}`;
+        document.getElementById("anTopSpeedDiff").textContent = `${cLap.topSpd - rLap.topSpd >= 0 ? "+" : ""}${cLap.topSpd - rLap.topSpd} km/h`;
+        document.getElementById("anTopSpeedDetail").textContent = `A: ${rLap.topSpd} / B: ${cLap.topSpd}`;
+
+        if (anRefPoly && anCmpPoly) {
+          anRefPoly.setLatLngs(rLap.points.map((p) => [p.lat, p.lng]));
+          anCmpPoly.setLatLngs(cLap.points.map((p) => [p.lat, p.lng]));
+        }
+
+        drawCompareCanvas(rLap, cLap);
+        renderCornerCoaching(rLap, cLap);
+      }
+
+      function drawCompareCanvas(rLap, cLap) {
+        const canvas = document.getElementById("telemetryCompareCanvas");
         if (!canvas) return;
         const rect = canvas.parentElement.getBoundingClientRect();
-        if (rect.width === 0 || rect.height === 0) return;
+        if (rect.width <= 0 || rect.height <= 0) return;
         const dpr = window.devicePixelRatio || 1;
         canvas.width = rect.width * dpr;
         canvas.height = rect.height * dpr;
@@ -1740,423 +2522,81 @@
 
         const w = rect.width;
         const h = rect.height;
-        const cx = w / 2;
-        const cy = h / 2;
         ctx.clearRect(0, 0, w, h);
 
-        ctx.strokeStyle = "rgba(100, 116, 139, 0.35)";
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.roundRect(cx - 24, cy - 86, 48, 172, 18);
-        ctx.stroke();
+        const padL = 42, padR = 16, padT = 18, padB = 26;
+        const plotW = w - padL - padR;
+        const plotH = h - padT - padB;
 
-        const fAlpha = 0.25 + (frontPct / 50) * 0.75;
-        ctx.strokeStyle = frontPct > 0 ? `rgba(56, 189, 248, ${fAlpha})` : "rgba(71, 85, 105, 0.3)";
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.moveTo(cx - 46, cy - 54);
-        ctx.lineTo(cx + 46, cy - 54);
-        ctx.stroke();
-
-        ctx.strokeStyle = "rgba(244, 63, 94, 0.85)";
-        ctx.lineWidth = 4;
-        ctx.beginPath();
-        ctx.moveTo(cx, cy - 54);
-        ctx.lineTo(cx, cy + 54);
-        ctx.stroke();
-
-        ctx.strokeStyle = lsdLeft > 0 ? "rgba(14, 165, 233, 0.85)" : "rgba(71, 85, 105, 0.3)";
-        ctx.lineWidth = 3.5;
-        ctx.beginPath();
-        ctx.moveTo(cx - 46, cy + 54);
-        ctx.lineTo(cx + 46, cy + 54);
-        ctx.stroke();
-
-        ctx.fillStyle = "#0f172a";
-        ctx.strokeStyle = "#f43f5e";
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.arc(cx, cy + 54, 8, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.stroke();
-      }
-
-      function drawGForceBall(gx, gy) {
-        const canvas = document.getElementById("gForceCanvas");
-        if (!canvas) return;
-        const rect = canvas.parentElement.getBoundingClientRect();
-        if (rect.width === 0 || rect.height === 0) return;
-        const dpr = window.devicePixelRatio || 1;
-        canvas.width = rect.width * dpr;
-        canvas.height = rect.height * dpr;
-        const ctx = canvas.getContext("2d");
-        ctx.scale(dpr, dpr);
-
-        const w = rect.width;
-        const h = rect.height;
-        const cx = w / 2;
-        const cy = h / 2;
-        const maxR = Math.min(w, h) * 0.42;
-
-        ctx.clearRect(0, 0, w, h);
-
-        [0.5, 1.0, 1.5].forEach((gRing) => {
-          const r = (gRing / 1.5) * maxR;
-          ctx.strokeStyle = gRing === 1.0 ? "rgba(244, 63, 94, 0.4)" : "rgba(71, 85, 105, 0.35)";
-          ctx.lineWidth = 1;
+        ctx.strokeStyle = "rgba(51, 65, 85, 0.45)";
+        ctx.lineWidth = 1;
+        for (let g = 0; g <= 4; g++) {
+          const y = padT + (plotH * g) / 4;
           ctx.beginPath();
-          ctx.arc(cx, cy, r, 0, Math.PI * 2);
+          ctx.moveTo(padL, y);
+          ctx.lineTo(w - padR, y);
           ctx.stroke();
-        });
+        }
 
-        ctx.strokeStyle = "rgba(71, 85, 105, 0.4)";
-        ctx.beginPath();
-        ctx.moveTo(cx - maxR, cy);
-        ctx.lineTo(cx + maxR, cy);
-        ctx.moveTo(cx, cy - maxR);
-        ctx.lineTo(cx, cy + maxR);
-        ctx.stroke();
-
-        const bx = cx + (Math.max(-1.5, Math.min(1.5, gx)) / 1.5) * maxR;
-        const by = cy - (Math.max(-1.5, Math.min(1.5, gy)) / 1.5) * maxR;
-
-        const grad = ctx.createRadialGradient(bx, by, 2, bx, by, 16);
-        grad.addColorStop(0, "rgba(244, 63, 94, 0.95)");
-        grad.addColorStop(1, "rgba(244, 63, 94, 0)");
-        ctx.fillStyle = grad;
-        ctx.beginPath();
-        ctx.arc(bx, by, 16, 0, Math.PI * 2);
-        ctx.fill();
-
-        ctx.fillStyle = "#ffffff";
-        ctx.beginPath();
-        ctx.arc(bx, by, 5, 0, Math.PI * 2);
-        ctx.fill();
-      }
-
-      // ================= 8. Leaflet 地図管理 =================
-      function createTileLayer(mode) {
-        if (mode === "dark") {
-          return L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
-            attribution: "&copy; CARTO",
-            maxZoom: 19
+        const drawTrace = (pts, color, getVal, minV, maxV) => {
+          if (!pts || pts.length < 2) return;
+          ctx.strokeStyle = color;
+          ctx.lineWidth = 2.2;
+          ctx.beginPath();
+          pts.forEach((pt, idx) => {
+            const x = padL + (pt.distM / FSW_LENGTH_M) * plotW;
+            const norm = Math.max(0, Math.min(1, (getVal(pt) - minV) / (maxV - minV)));
+            const y = padT + plotH - norm * plotH;
+            if (idx === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
           });
-        }
-        return L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
-          attribution: "Esri Satellite",
-          maxZoom: 19
-        });
-      }
-
-      function createCarIcon() {
-        return L.divIcon({ className: "", html: `<div class="car-beacon"></div>`, iconSize: [16, 16], iconAnchor: [8, 8] });
-      }
-
-      function initMaps() {
-        if (typeof L === "undefined") return;
-        const fswPolyCoords = fswNodes.map((n) => [n.lat, n.lng]);
-
-        const miniEl = document.getElementById("miniLeafletMap");
-        if (miniEl && !miniMap) {
-          miniMap = L.map(miniEl, { zoomControl: false, attributionControl: false }).setView([lastLat, lastLng], 15);
-          miniTile = createTileLayer(mapStyleMode).addTo(miniMap);
-          L.polyline(fswPolyCoords, { color: "rgba(148,163,184,0.35)", weight: 3, dashArray: "5,5" }).addTo(miniMap);
-          miniPoly = L.polyline([], { color: "#38bdf8", weight: 3 }).addTo(miniMap);
-          miniMarker = L.marker([lastLat, lastLng], { icon: createCarIcon() }).addTo(miniMap);
-        }
-
-        const recEl = document.getElementById("recorderLeafletMap");
-        if (recEl && !recMap) {
-          recMap = L.map(recEl, { zoomControl: true, attributionControl: false }).setView([35.3695, 138.9275], 15);
-          recTile = createTileLayer(mapStyleMode).addTo(recMap);
-          recTrackBg = L.polyline(fswPolyCoords, { color: "rgba(255,255,255,0.28)", weight: 4 }).addTo(recMap);
-          if (controlLine) {
-            recSfLine = L.polyline([[controlLine.p1.lat, controlLine.p1.lng], [controlLine.p2.lat, controlLine.p2.lng]], {
-              color: "#f43f5e",
-              weight: 5
-            }).addTo(recMap);
-          }
-          recLivePoly = L.polyline([], { color: "#10b981", weight: 4 }).addTo(recMap);
-          recMarker = L.marker([lastLat, lastLng], { icon: createCarIcon() }).addTo(recMap);
-        }
-      }
-
-      function toggleMapStyle() {
-        mapStyleMode = (mapStyleMode === "satellite") ? "dark" : "satellite";
-        document.querySelectorAll(".map-style-btn").forEach((btn) => {
-          btn.textContent = mapStyleMode === "satellite" ? "🛰️ 航空" : "🌑 ダーク";
-        });
-        [
-          { map: miniMap, getTile: () => miniTile, setTile: (t) => { miniTile = t; } },
-          { map: fullMap, getTile: () => fullTile, setTile: (t) => { fullTile = t; } },
-          { map: recMap,  getTile: () => recTile,  setTile: (t) => { recTile = t; } },
-          { map: anMap,   getTile: () => anTile,   setTile: (t) => { anTile = t; } }
-        ].forEach((entry) => {
-          if (entry.map) {
-            if (entry.getTile()) entry.map.removeLayer(entry.getTile());
-            entry.setTile(createTileLayer(mapStyleMode).addTo(entry.map));
-          }
-        });
-      }
-
-      function updateMapPositions(lat, lng, isDemoSource) {
-        if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat === 0 || lng === 0) return;
-
-        if (lastWasDemoSource !== isDemoSource) {
-          trackPoints = [];
-          if (miniPoly) miniPoly.setLatLngs([]);
-          if (fullPoly) fullPoly.setLatLngs([]);
-          if (miniMap) miniMap.setView([lat, lng], 16);
-          lastWasDemoSource = isDemoSource;
-        }
-
-        lastLat = lat;
-        lastLng = lng;
-        const coordEl = document.getElementById("gpsCoordLbl");
-        if (coordEl) coordEl.textContent = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
-
-        trackPoints.push([lat, lng]);
-        if (trackPoints.length > 350) trackPoints.shift();
-
-        if (miniMarker) miniMarker.setLatLng([lat, lng]);
-        if (miniPoly) miniPoly.setLatLngs(trackPoints);
-        if (miniMap && mapFollowCar) miniMap.panTo([lat, lng], { animate: false });
-
-        if (fullMarker) fullMarker.setLatLng([lat, lng]);
-        if (fullPoly) fullPoly.setLatLngs(trackPoints);
-        if (fullMap && mapFollowCar) fullMap.panTo([lat, lng], { animate: false });
-
-        if (recMarker) recMarker.setLatLng([lat, lng]);
-        if (recLivePoly && lapSession.active) {
-          recLivePoly.setLatLngs(lapSession.currentSamples.map((s) => [s.lat, s.lng]));
-        }
-      }
-
-      // ================= 9. メインUI更新エンジン =================
-      function buildShiftLights() {
-        const box = document.getElementById("shiftLights");
-        if (!box) return;
-        box.innerHTML = "";
-        for (let i = 0; i < 12; i++) {
-          const led = document.createElement("div");
-          led.className = "h-2.5 rounded-full bg-slate-900 border border-slate-800 transition-colors duration-75";
-          box.appendChild(led);
-        }
-      }
-
-      function updateDashboardUI(d) {
-        const prof = VEHICLE_PROFILES[currentModel] || VEHICLE_PROFILES.GRECALE;
-        smoothTarget.rpm = Math.max(0, Number(d.rpm) || 0);
-        smoothTarget.spd = Math.max(0, Number(d.spd) || 0);
-        smoothTarget.bst = Number(d.bst) || 0;
-        smoothTarget.lod = Math.max(0, Math.min(100, Number(d.lod) || 0));
-        smoothTarget.ped = Math.max(0, Math.min(100, Number(d.ped) || 0));
-        smoothTarget.brk = Math.max(0, Math.min(100, Number(d.brk) || 0));
-        smoothTarget.str = Number(d.str) || 0;
-        smoothTarget.gx  = Number(d.gx) || 0;
-        smoothTarget.gy  = Number(d.gy) || 0;
-        smoothLastD      = d;
-
-        const spd = Math.round(smoothTarget.spd);
-        const gear = Number(d.gear) || 0;
-        const ped = smoothTarget.ped;
-        const brk = smoothTarget.brk;
-        const gx = smoothTarget.gx;
-        const gy = smoothTarget.gy;
-
-        const isDemoSource = (Number(d.sim) === 1) || Boolean(localDemoTimer);
-        const isZeroTireMode = !isDemoSource && Number(d.can_ok) !== 1;
-
-        if (spd > peakSpeed) {
-          peakSpeed = spd;
-          document.getElementById("peakSpeedLbl").textContent = `PEAK: ${peakSpeed} km/h`;
-        }
-        document.getElementById("gearValue").textContent = gear === 0 ? "N" : gear === -1 ? "R" : String(gear);
-
-        if (Array.isArray(d.tp) && d.tp.length >= 4) latestTireState.tp = d.tp.map(Number);
-        if (Array.isArray(d.tt) && d.tt.length >= 4) latestTireState.tt = d.tt.map(Number);
-
-        const awdF = d.awd_f !== undefined ? Number(d.awd_f) : prof.defaultFront;
-        const lsdL = d.lsd_l !== undefined ? Number(d.lsd_l) : 50;
-        renderFourWheelMonitor(awdF, lsdL, 100 - lsdL, latestTireState.tp, latestTireState.tt, isZeroTireMode);
-
-        document.getElementById("oilTempVal").textContent = Number(d.oil) > 0 ? `${Number(d.oil).toFixed(1)} °C` : "--.- °C";
-        document.getElementById("transTempVal").textContent = Number(d.tra) > 0 ? `${Number(d.tra).toFixed(1)} °C` : "--.- °C";
-        document.getElementById("waterTempVal").textContent = Number(d.wat) > 0 ? `${Number(d.wat).toFixed(1)} °C` : "--.- °C";
-        document.getElementById("iatTempVal").textContent = Number(d.iat) > 0 ? `${Number(d.iat).toFixed(1)} °C` : "--.- °C";
-        document.getElementById("ignVal").textContent = d.ign !== undefined ? `${Number(d.ign).toFixed(1)}°` : "--°";
-        document.getElementById("afrVal").textContent = d.afr !== undefined ? Number(d.afr).toFixed(2) : "1.00";
-        document.getElementById("batVal").textContent = d.bat !== undefined ? `${Number(d.bat).toFixed(1)}V` : "--.-V";
-
-        const totG = Math.hypot(gx, gy);
-        if (totG > maxTotalG) {
-          maxTotalG = totG;
-          document.getElementById("maxGLbl").textContent = `MAX: ${maxTotalG.toFixed(2)}G`;
-        }
-
-        const gpsBadge = document.getElementById("gpsFixBadge");
-        if (gpsBadge) {
-          if (isDemoSource) {
-            gpsBadge.textContent = "FSW DEMO";
-            gpsBadge.className = "mono text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-indigo-950 text-indigo-300 border border-indigo-600/60";
-          } else if (Number(d.gps_fix) === 1) {
-            gpsBadge.textContent = `GPS FIX (${arduinoGpsSats}衛星)`;
-            gpsBadge.className = "mono text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-500/70";
-          } else {
-            gpsBadge.textContent = `GPS WAIT (${arduinoGpsSats}衛星)`;
-            gpsBadge.className = "mono text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-amber-950 text-amber-300 border border-amber-600/60";
-          }
-        }
-
-        if (d.lat && d.lng) {
-          updateMapPositions(Number(d.lat), Number(d.lng), isDemoSource);
-        }
-
-        if (activeViewMode === "lap") {
-          document.getElementById("recMiniSpdGear").textContent = `${spd} km/h / ${gear === 0 ? "N" : gear}`;
-          document.getElementById("recLiveG").textContent = `${gx.toFixed(2)} / ${gy.toFixed(2)}G`;
-          document.getElementById("recLivePedals").textContent = `${Math.round(ped)}% / ${Math.round(brk)}%`;
-        }
-      }
-
-      function renderSmoothGaugesLoop() {
-        const prof = VEHICLE_PROFILES[currentModel] || VEHICLE_PROFILES.GRECALE;
-        const lerp = 0.28;
-        Object.keys(smoothCur).forEach((k) => {
-          smoothCur[k] += (smoothTarget[k] - smoothCur[k]) * lerp;
-          if (Math.abs(smoothTarget[k] - smoothCur[k]) < 0.005) smoothCur[k] = smoothTarget[k];
-        });
-
-        const rpm = Math.round(smoothCur.rpm);
-        const spd = Math.round(smoothCur.spd);
-        const rpmPct = Math.min(100, (smoothCur.rpm / prof.maxRpm) * 100);
-
-        const rpmEl = document.getElementById("rpmValue");
-        const rpmBarEl = document.getElementById("rpmBar");
-        if (rpmEl) rpmEl.textContent = rpm;
-        if (rpmBarEl) rpmBarEl.style.width = `${rpmPct}%`;
-
-        const slBox = document.getElementById("shiftLights");
-        if (slBox) {
-          const leds = slBox.children;
-          const activeLeds = Math.round((smoothCur.rpm / prof.redline) * 12);
-          for (let i = 0; i < leds.length; i++) {
-            leds[i].style.backgroundColor = i < activeLeds ? (i < 4 ? "#10b981" : i < 8 ? "#f59e0b" : "#ef4444") : "#0f172a";
-          }
-        }
-
-        const spdEl = document.getElementById("speedValue");
-        if (spdEl) spdEl.textContent = spd;
-
-        const bstEl = document.getElementById("boostValue");
-        const bstBar = document.getElementById("boostBar");
-        if (bstEl) bstEl.textContent = `${smoothCur.bst.toFixed(2)} bar`;
-        if (bstBar) {
-          const bstPct = Math.max(0, Math.min(100, ((smoothCur.bst + 0.8) / (prof.maxBoost + 0.8)) * 100));
-          bstBar.style.width = `${bstPct}%`;
-        }
-
-        const lodEl = document.getElementById("loadValue");
-        const lodBar = document.getElementById("loadBar");
-        if (lodEl) lodEl.textContent = `${Math.round(smoothCur.lod)}%`;
-        if (lodBar) lodBar.style.width = `${smoothCur.lod}%`;
-
-        const pedEl = document.getElementById("pedalValue");
-        const pedBar = document.getElementById("pedalBar");
-        if (pedEl) pedEl.textContent = `${Math.round(smoothCur.ped)}%`;
-        if (pedBar) pedBar.style.width = `${smoothCur.ped}%`;
-
-        const brkEl = document.getElementById("brakeValue");
-        const brkBar = document.getElementById("brakeBar");
-        if (brkEl) brkEl.textContent = `${Math.round(smoothCur.brk)}%`;
-        if (brkBar) brkBar.style.width = `${smoothCur.brk}%`;
-
-        const strEl = document.getElementById("steerValue");
-        if (strEl) strEl.textContent = `${smoothCur.str.toFixed(1)}°`;
-
-        const latEl = document.getElementById("latGVal");
-        const lonEl = document.getElementById("lonGVal");
-        if (latEl) latEl.textContent = `${smoothCur.gx.toFixed(2)} G`;
-        if (lonEl) lonEl.textContent = `${smoothCur.gy.toFixed(2)} G`;
-        drawGForceBall(smoothCur.gx, smoothCur.gy);
-
-        requestAnimationFrame(renderSmoothGaugesLoop);
-      }
-
-      // ================= 10. MQTT 通信・正規化・ステータス監視 =================
-      function normalizeArduinoPacket(raw) {
-        return {
-          can_ok: raw.c !== undefined ? raw.c : raw.can_ok,
-          sim: raw.s !== undefined ? raw.s : raw.sim,
-          gps_fix: raw.gf !== undefined ? raw.gf : raw.gps_fix,
-          gps_sats: raw.gs !== undefined ? raw.gs : raw.gps_sats,
-          model: raw.m || raw.model,
-          rssi: raw.rs !== undefined ? raw.rs : raw.rssi,
-          uptime: raw.u !== undefined ? raw.u : raw.uptime,
-          rpm: raw.r !== undefined ? raw.r : raw.rpm,
-          spd: raw.v !== undefined ? raw.v : raw.spd,
-          gear: raw.g !== undefined ? raw.g : raw.gear,
-          bst: raw.b !== undefined ? raw.b : raw.bst,
-          lod: raw.l !== undefined ? raw.l : raw.lod,
-          ped: raw.p !== undefined ? raw.p : raw.ped,
-          thr: raw.t !== undefined ? raw.t : raw.thr,
-          brk: raw.k !== undefined ? raw.k : raw.brk,
-          oil: raw.o !== undefined ? raw.o : raw.oil,
-          tra: raw.tm !== undefined ? raw.tm : raw.tra,
-          wat: raw.w !== undefined ? raw.w : raw.wat,
-          iat: raw.ia !== undefined ? raw.ia : raw.iat,
-          ign: raw.ig !== undefined ? raw.ig : raw.ign,
-          afr: raw.af !== undefined ? raw.af : raw.afr,
-          bat: raw.bt !== undefined ? raw.bt : raw.bat,
-          str: raw.st !== undefined ? raw.st : raw.str,
-          awd_f: raw.afw !== undefined ? raw.afw : raw.awd_f,
-          lsd_l: raw.ll !== undefined ? raw.ll : raw.lsd_l,
-          gx: raw.gx,
-          gy: raw.gy,
-          lat: raw.la !== undefined ? raw.la : raw.lat,
-          lng: raw.ln !== undefined ? raw.ln : raw.lng,
-          tp: raw.tp,
-          tt: raw.tt
+          ctx.stroke();
         };
+
+        drawTrace(rLap.points, "#10b981", (p) => p.spd, 40, 300);
+        drawTrace(cLap.points, "#38bdf8", (p) => p.spd, 40, 300);
       }
 
-      function connectMqttCloud() {
-        if (mqttClient && mqttClient.readyState === WebSocket.OPEN) return;
+      function renderCornerCoaching(rLap, cLap) {
+        const grid = document.getElementById("cornerCoachingGrid");
+        if (!grid) return;
+        let worstCorner = null;
+        let worstDiff = -999;
 
-        const mqttBadge = document.getElementById("mqttBadge");
-        const monMqtt = document.getElementById("monMqttStatus");
-        if (mqttBadge) mqttBadge.textContent = "MQTT...";
-        if (monMqtt) monMqtt.textContent = "CONNECTING";
+        const cards = FSW_CORNERS.map((c) => {
+          const rPts = rLap.points.filter((p) => p.distM >= c.startM && p.distM <= c.endM);
+          const cPts = cLap.points.filter((p) => p.distM >= c.startM && p.distM <= c.endM);
+          const rMin = rPts.length ? Math.min(...rPts.map((p) => p.spd)) : c.targetSpd;
+          const cMin = cPts.length ? Math.min(...cPts.map((p) => p.spd)) : c.targetSpd;
+          const spdDiff = cMin - rMin;
+          if (-spdDiff > worstDiff) {
+            worstDiff = -spdDiff;
+            worstCorner = c.name;
+          }
+          return `
+            <div class="corner-card p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-1">
+              <div class="flex justify-between items-center">
+                <span class="text-xs font-black text-white">${c.name}</span>
+                <span class="mono text-xs font-bold ${spdDiff >= 0 ? "text-emerald-400" : "text-rose-400"}">${spdDiff >= 0 ? "+" : ""}${spdDiff} km/h</span>
+              </div>
+              <p class="mono text-[11px] text-slate-400">最低通過速度 A:${rMin}km/h / B:${cMin}km/h</p>
+            </div>
+          `;
+        });
 
-        try {
-          const ws = new WebSocket(MQTT_WSS_URL, "mqtt");
-          ws.binaryType = "arraybuffer";
-          mqttClient = ws;
+        grid.innerHTML = cards.join("");
+        const lossEl = document.getElementById("anBiggestLossCorner");
+        if (lossEl && worstCorner) lossEl.textContent = worstCorner;
+      }
 
-          ws.onopen = () => {
-            const clientId = "pit-web-" + Math.random().toString(16).slice(2, 10);
-            sendMqttConnectPacket(ws, clientId);
-          };
-
-          ws.onmessage = (evt) => {
-            const buf = new Uint8Array(evt.data);
-            handleMqttBinaryFrame(ws, buf);
-          };
-
-          ws.onclose = () => {
-            mqttConnected = false;
-            if (mqttBadge) {
-              mqttBadge.textContent = "MQTT OFF";
-              mqttBadge.className = "mono text-[10px] font-bold px-2 py-1.5 rounded-lg bg-rose-950/80 text-rose-300 border border-rose-700/60";
-            }
-            if (monMqtt) monMqtt.textContent = "DISCONNECTED";
-            setTimeout(connectMqttCloud, 3500);
-          };
-
-          ws.onerror = () => { ws.close(); };
-        } catch (err) {
-          setTimeout(connectMqttCloud, 4000);
-        }
+      // ================= 11. MQTT WebSocket 通信エンジン =================
+      function encodeMqttString(str) {
+        const enc = new TextEncoder().encode(str);
+        const out = new Uint8Array(2 + enc.length);
+        out[0] = (enc.length >> 8) & 0xff;
+        out[1] = enc.length & 0xff;
+        out.set(enc, 2);
+        return out;
       }
 
       function encodeRemainingLength(len) {
@@ -2167,1266 +2607,676 @@
           if (len > 0) digit |= 0x80;
           bytes.push(digit);
         } while (len > 0);
-        return bytes;
+        return new Uint8Array(bytes);
       }
 
-      function sendMqttConnectPacket(ws, clientId) {
-        const enc = new TextEncoder();
-        const proto = enc.encode("MQTT");
-        const cid = enc.encode(clientId);
-        const vhLen = 2 + proto.length + 1 + 1 + 2;
-        const plLen = 2 + cid.length;
-        const rem = encodeRemainingLength(vhLen + plLen);
-        const pkt = new Uint8Array(1 + rem.length + vhLen + plLen);
-        let p = 0;
-        pkt[p++] = 0x10;
-        rem.forEach((b) => { pkt[p++] = b; });
-        pkt[p++] = 0x00; pkt[p++] = proto.length;
-        pkt.set(proto, p); p += proto.length;
-        pkt[p++] = 0x04;
-        pkt[p++] = 0x02;
-        pkt[p++] = 0x00; pkt[p++] = 30;
-        pkt[p++] = (cid.length >> 8) & 0xff; pkt[p++] = cid.length & 0xff;
-        pkt.set(cid, p);
+      function sendMqttConnect(ws) {
+        const clientId = "web_pit_" + Math.random().toString(16).slice(2, 10);
+        const proto = encodeMqttString("MQTT");
+        const cid = encodeMqttString(clientId);
+        const vh = new Uint8Array([proto[0], proto[1], proto[2], proto[3], proto[4], proto[5], 4, 2, 0, 30]);
+        const rem = encodeRemainingLength(vh.length + cid.length);
+        const pkt = new Uint8Array(1 + rem.length + vh.length + cid.length);
+        pkt[0] = 0x10;
+        pkt.set(rem, 1);
+        pkt.set(vh, 1 + rem.length);
+        pkt.set(cid, 1 + rem.length + vh.length);
         ws.send(pkt);
       }
 
       function sendMqttSubscribe(ws, topic) {
-        const enc = new TextEncoder();
-        const tBytes = enc.encode(topic);
-        const rem = encodeRemainingLength(2 + 2 + tBytes.length + 1);
-        const pkt = new Uint8Array(1 + rem.length + 2 + 2 + tBytes.length + 1);
-        let p = 0;
-        pkt[p++] = 0x82;
-        rem.forEach((b) => { pkt[p++] = b; });
-        pkt[p++] = 0x00; pkt[p++] = 0x01;
-        pkt[p++] = (tBytes.length >> 8) & 0xff; pkt[p++] = tBytes.length & 0xff;
-        pkt.set(tBytes, p); p += tBytes.length;
-        pkt[p++] = 0x00;
+        const tBytes = encodeMqttString(topic);
+        const vh = new Uint8Array([0, 1]);
+        const rem = encodeRemainingLength(vh.length + tBytes.length + 1);
+        const pkt = new Uint8Array(1 + rem.length + vh.length + tBytes.length + 1);
+        pkt[0] = 0x82;
+        pkt.set(rem, 1);
+        pkt.set(vh, 1 + rem.length);
+        pkt.set(tBytes, 1 + rem.length + vh.length);
+        pkt[pkt.length - 1] = 0;
         ws.send(pkt);
       }
 
-      function publishMqttCommand(payloadObj) {
-        const str = typeof payloadObj === "string" ? payloadObj : JSON.stringify(payloadObj);
-        appendDebugConsoleLine("CMD TX", str, "text-amber-300");
-        if (!mqttClient || mqttClient.readyState !== WebSocket.OPEN || !mqttConnected) {
-          appendLog("MQTT未接続のためコマンド保留: " + str);
-          return;
-        }
-        const enc = new TextEncoder();
-        const tBytes = enc.encode(MQTT_CMD);
-        const mBytes = enc.encode(str);
-        const rem = encodeRemainingLength(2 + tBytes.length + mBytes.length);
-        const pkt = new Uint8Array(1 + rem.length + 2 + tBytes.length + mBytes.length);
-        let p = 0;
-        pkt[p++] = 0x30;
-        rem.forEach((b) => { pkt[p++] = b; });
-        pkt[p++] = (tBytes.length >> 8) & 0xff; pkt[p++] = tBytes.length & 0xff;
-        pkt.set(tBytes, p); p += tBytes.length;
-        pkt.set(mBytes, p);
-        mqttClient.send(pkt);
+      function sendMqttPublish(ws, topic, payloadStr) {
+        const tBytes = encodeMqttString(topic);
+        const pBytes = new TextEncoder().encode(payloadStr);
+        const rem = encodeRemainingLength(tBytes.length + pBytes.length);
+        const pkt = new Uint8Array(1 + rem.length + tBytes.length + pBytes.length);
+        pkt[0] = 0x30;
+        pkt.set(rem, 1);
+        pkt.set(tBytes, 1 + rem.length);
+        pkt.set(pBytes, 1 + rem.length + tBytes.length);
+        ws.send(pkt);
       }
 
-      function handleMqttBinaryFrame(ws, buf) {
-        let offset = 0;
-        const dec = new TextDecoder();
-        while (offset < buf.length) {
-          const header = buf[offset++];
-          const pktType = header >> 4;
-          let multiplier = 1;
-          let remLen = 0;
-          let digit = 0;
-          do {
-            if (offset >= buf.length) return;
-            digit = buf[offset++];
-            remLen += (digit & 127) * multiplier;
-            multiplier *= 128;
-          } while ((digit & 128) !== 0);
-
-          const body = buf.slice(offset, offset + remLen);
-          offset += remLen;
-
-          if (pktType === 2) {
-            mqttConnected = true;
-            const mqttBadge = document.getElementById("mqttBadge");
-            const monMqtt = document.getElementById("monMqttStatus");
-            if (mqttBadge) {
-              mqttBadge.textContent = "MQTT OK";
-              mqttBadge.className = "mono text-[10px] font-bold px-2 py-1.5 rounded-lg bg-emerald-950/90 text-emerald-300 border border-emerald-600/70";
-            }
-            if (monMqtt) monMqtt.textContent = "CONNECTED";
-            sendMqttSubscribe(ws, MQTT_TOPIC);
-            appendLog("MQTTブローカー接続完了: " + MQTT_TOPIC);
-          } else if (pktType === 3) {
-            if (body.length < 2) continue;
-            const tLen = (body[0] << 8) | body[1];
-            const qos = (header >> 1) & 0x03;
-            const payloadOffset = 2 + tLen + (qos > 0 ? 2 : 0);
-            const jsonText = dec.decode(body.slice(payloadOffset));
-            onIncomingTelemetryJson(jsonText);
-          }
+      function publishMqttCommand(obj) {
+        const str = JSON.stringify(obj);
+        appendConsoleStream("CMD TX", str);
+        const fb = document.getElementById("cmdFeedbackLbl");
+        if (fb) fb.textContent = `COMMAND SENT: ${str}`;
+        if (mqttClient && mqttConnected && mqttClient.readyState === WebSocket.OPEN) {
+          sendMqttPublish(mqttClient, MQTT_CMD, str);
         }
       }
 
-      function onIncomingTelemetryJson(jsonText) {
-        let raw;
+      function connectMqtt() {
         try {
-          raw = JSON.parse(jsonText);
+          const ws = new WebSocket(MQTT_WSS_URL, "mqtt");
+          ws.binaryType = "arraybuffer";
+          mqttClient = ws;
+
+          ws.onopen = () => {
+            sendMqttConnect(ws);
+          };
+
+          ws.onmessage = (ev) => {
+            const buf = new Uint8Array(ev.data);
+            if (buf.length < 2) return;
+            const pktType = buf[0] >> 4;
+
+            if (pktType === 2) {
+              mqttConnected = true;
+              const mqttBadge = document.getElementById("mqttBadge");
+              const monMqtt = document.getElementById("monMqttStatus");
+              if (mqttBadge) {
+                mqttBadge.textContent = "MQTT OK";
+                mqttBadge.className = "mono text-[10px] font-bold px-2 py-1.5 rounded-lg bg-emerald-950/90 text-emerald-300 border border-emerald-600/70";
+              }
+              if (monMqtt) monMqtt.textContent = "CONNECTED";
+              sendMqttSubscribe(ws, MQTT_TOPIC);
+              lastModelSyncCmdTs = Date.now();
+              publishMqttCommand({ set_vehicle: currentModel });
+              appendLog("MQTTブローカー接続完了・車種自動同期: " + currentModel);
+            } else if (pktType === 3) {
+              let idx = 1;
+              let mult = 1;
+              let remLen = 0;
+              let digit = 0;
+              do {
+                digit = buf[idx++];
+                remLen += (digit & 127) * mult;
+                mult *= 128;
+              } while ((digit & 128) !== 0 && idx < buf.length);
+
+              const topicLen = (buf[idx] << 8) | buf[idx + 1];
+              idx += 2 + topicLen;
+              const qos = (buf[0] >> 1) & 0x03;
+              if (qos > 0) idx += 2;
+              const payloadBytes = buf.slice(idx);
+              const payloadStr = new TextDecoder().decode(payloadBytes);
+              handleIncomingTelemetry(payloadStr);
+            }
+          };
+
+          ws.onclose = () => {
+            mqttConnected = false;
+            const mqttBadge = document.getElementById("mqttBadge");
+            if (mqttBadge) {
+              mqttBadge.textContent = "MQTT RETRY";
+              mqttBadge.className = "mono text-[10px] font-bold px-2 py-1.5 rounded-lg bg-rose-950/80 text-rose-300 border border-rose-700/60";
+            }
+            setTimeout(connectMqtt, 3000);
+          };
+
+          ws.onerror = () => {
+            try { ws.close(); } catch (e) {}
+          };
         } catch (e) {
-          appendDebugConsoleLine("JSON ERR", jsonText, "text-rose-400");
+          setTimeout(connectMqtt, 4000);
+        }
+      }
+
+      function handleIncomingTelemetry(jsonStr) {
+        let raw = null;
+        try {
+          raw = JSON.parse(jsonStr);
+        } catch (e) {
           return;
         }
+        if (!raw || typeof raw !== "object") return;
 
         const now = Date.now();
         lastArduinoRxTime = now;
         totalPackets += 1;
         rxTimestamps.push(now);
-        while (rxTimestamps.length > 0 && now - rxTimestamps[0] > 3000) rxTimestamps.shift();
+        latestRawJsonStr = jsonStr;
 
-        latestRawJsonStr = jsonText;
-        debugStore.rawPackets.push({ ts: new Date().toISOString(), raw });
-        if (debugStore.rawPackets.length > 120) debugStore.rawPackets.shift();
-
-        const monRaw = document.getElementById("monRawJson");
-        if (monRaw) monRaw.textContent = jsonText;
+        const rawJsonEl = document.getElementById("monRawJson");
+        const pktsEl = document.getElementById("monPkts");
+        if (rawJsonEl) rawJsonEl.textContent = jsonStr;
+        if (pktsEl) pktsEl.textContent = `${totalPackets} pkts`;
 
         if (raw.pong === 1) {
           const rtt = pendingPingTs > 0 ? (now - pendingPingTs) : 0;
-          arduinoIp = raw.ip || arduinoIp;
-          if (raw.m) arduinoSyncedModel = raw.m;
-          const monRtt = document.getElementById("monRtt");
-          const monIp = document.getElementById("monIp");
-          const fb = document.getElementById("cmdFeedbackLbl");
-          if (monRtt) monRtt.textContent = `${rtt} ms`;
-          if (monIp) monIp.textContent = arduinoIp || "--.--.--.--";
-          if (fb) fb.textContent = `COMMAND FEEDBACK: PONG OK (${rtt}ms) IP:${arduinoIp}`;
-          appendDebugConsoleLine("PONG RX", jsonText, "text-emerald-300");
+          const rttEl = document.getElementById("monRtt");
+          const ipEl = document.getElementById("monIp");
+          if (rttEl) rttEl.textContent = `${rtt} ms`;
+          if (ipEl && raw.ip) { arduinoIp = raw.ip; ipEl.textContent = raw.ip; }
+          appendLog(`PONG応答受信: RTT=${rtt}ms / IP=${raw.ip || "--"}`);
           return;
         }
 
         if (raw.ack === 1) {
-          const fb = document.getElementById("cmdFeedbackLbl");
-          if (fb) fb.textContent = `COMMAND FEEDBACK: ACK [${raw.cmd}] -> LED:${raw.led}`;
-          appendDebugConsoleLine("ACK RX", jsonText, "text-cyan-300");
+          appendConsoleStream("ACK RX", jsonStr);
+          appendLog(`Arduino応答(${raw.cmd}): LED=${raw.led}`);
           return;
         }
 
         if (raw.diag) {
-          debugStore.udsResponses.push(`[${new Date().toTimeString().split(" ")[0]}] ${raw.diag}`);
-          appendLog("UDS診断応答: " + raw.diag);
-          appendDebugConsoleLine("RX_UDS", raw.diag, "text-amber-300 font-bold");
-          saveDebugStateToStorage();
+          const ts = new Date().toTimeString().split(" ")[0];
+          const diagLine = `[${ts}] ${raw.diag}`;
+          debugStore.udsResponses.push(diagLine);
+          appendConsoleStream("RX_UDS", raw.diag);
+          appendLog(`UDS診断応答: ${raw.diag}`);
+          saveDebugStateToLocalStorage();
           return;
         }
 
-        if (consoleShowRawJson) {
-          appendDebugConsoleLine("RX_PKT", jsonText, "text-slate-300");
+        appendConsoleStream("RX_PKT", jsonStr);
+        debugStore.rawPackets.push({ ts: now, data: raw });
+        if (debugStore.rawPackets.length > 200) debugStore.rawPackets.shift();
+
+        if (Array.isArray(raw.tp) && raw.tp.length >= 4) {
+          latestTireState.tp = raw.tp.map(Number);
+        }
+        if (Array.isArray(raw.tt) && raw.tt.length >= 4) {
+          latestTireState.tt = raw.tt.map(Number);
         }
 
-        evaluateSignalPacket(raw);
+        const d = {
+          can_ok: raw.c !== undefined ? Number(raw.c) : raw.can_ok,
+          sim: raw.s !== undefined ? Number(raw.s) : raw.sim,
+          model: raw.m || raw.model,
+          proto: raw.pr || "",
+          rssi: raw.rs !== undefined ? Number(raw.rs) : null,
+          uptime: raw.u !== undefined ? Number(raw.u) : 0,
+          gps_fix: raw.gf !== undefined ? Number(raw.gf) : 0,
+          gps_sats: raw.gs !== undefined ? Number(raw.gs) : 0,
+          rpm: raw.r !== undefined ? Number(raw.r) : raw.rpm,
+          spd: raw.v !== undefined ? Number(raw.v) : raw.spd,
+          gear: raw.g !== undefined ? Number(raw.g) : raw.gear,
+          bst: raw.b !== undefined ? Number(raw.b) : raw.bst,
+          lod: raw.l !== undefined ? Number(raw.l) : raw.lod,
+          ped: raw.p !== undefined ? Number(raw.p) : raw.ped,
+          thr: raw.t !== undefined ? Number(raw.t) : raw.thr,
+          brk: raw.k !== undefined ? Number(raw.k) : raw.brk,
+          oil: raw.o !== undefined ? Number(raw.o) : raw.oil,
+          tra: raw.tm !== undefined ? Number(raw.tm) : raw.tra,
+          wat: raw.w !== undefined ? Number(raw.w) : raw.wat,
+          iat: raw.ia !== undefined ? Number(raw.ia) : raw.iat,
+          ign: raw.ig !== undefined ? Number(raw.ig) : raw.ign,
+          afr: raw.af !== undefined ? Number(raw.af) : raw.afr,
+          bat: raw.bt !== undefined ? Number(raw.bt) : raw.bat,
+          str: raw.st !== undefined ? Number(raw.st) : raw.str,
+          awd_f: raw.afw !== undefined ? Number(raw.afw) : raw.awd_f,
+          lsd_l: raw.ll !== undefined ? Number(raw.ll) : raw.lsd_l,
+          gx: raw.gx !== undefined ? Number(raw.gx) : raw.gx,
+          gy: raw.gy !== undefined ? Number(raw.gy) : raw.gy,
+          lat: raw.la !== undefined ? Number(raw.la) : raw.lat,
+          lng: raw.ln !== undefined ? Number(raw.ln) : raw.lng
+        };
 
-        const d = normalizeArduinoPacket(raw);
-        arduinoSimActive = Number(d.sim) === 1;
-        arduinoCanOk = Number(d.can_ok) === 1;
-        arduinoGpsFix = Number(d.gps_fix) === 1;
-        if (d.gps_sats !== undefined) arduinoGpsSats = Number(d.gps_sats) || 0;
+        if (d.can_ok !== undefined) arduinoCanOk = (d.can_ok === 1);
+        if (d.sim !== undefined) arduinoSimActive = (d.sim === 1);
+        if (d.gps_fix !== undefined) arduinoGpsFix = (d.gps_fix === 1);
+        if (d.gps_sats !== undefined) arduinoGpsSats = d.gps_sats;
+        if (d.rssi !== null) latestRssi = d.rssi;
+        if (d.uptime > 0) latestUptime = d.uptime;
+
         if (d.model && VEHICLE_PROFILES[d.model]) {
           arduinoSyncedModel = d.model;
+          if (d.model !== currentModel && (now - lastModelSyncCmdTs > 4500)) {
+            lastModelSyncCmdTs = now;
+            publishMqttCommand({ set_vehicle: currentModel });
+          }
         }
-        if (d.rssi !== undefined) latestRssi = Number(d.rssi);
-        if (d.uptime !== undefined) latestUptime = Number(d.uptime);
+        if (d.proto) {
+          arduinoProtoTag = d.proto;
+        }
 
-        if (localDemoTimer) stopLocalDemo();
+        if (arduinoSimActive && localDemoTimer) {
+          stopLocalDemo();
+        }
+        lastWasDemoSource = arduinoSimActive;
 
+        evaluateSignalPacket(raw);
         updateDashboardUI(d);
-        if (lapSession.active) recordTelemetrySample(d);
+        updateDebugBoardState();
       }
 
-      // ================= 11. 定期ステータス監視ループ =================
-      function updateConnectionHealthUI() {
-        const now = Date.now();
-        const alive = (lastArduinoRxTime > 0) && (now - lastArduinoRxTime < 3500);
-        const hz = alive ? (rxTimestamps.length / 3.0) : 0;
-
-        const topHz = document.getElementById("topHzBadge");
-        const monHz = document.getElementById("monHz");
-        const monEl = document.getElementById("monElapsed");
-        const monPkts = document.getElementById("monPkts");
-        const monRssi = document.getElementById("monRssi");
-        const monUp = document.getElementById("monUptime");
-        const monMod = document.getElementById("monModel");
-        const monR4 = document.getElementById("monArduinoStatus");
-        const monCan = document.getElementById("monCanStatus");
-        const srcBadge = document.getElementById("sourceBadge");
-        const monDot = document.getElementById("monitorBtnDot");
-        const dummyBtn = document.getElementById("topR4DummyBtn");
-
-        if (topHz) topHz.textContent = `${hz.toFixed(1)}Hz`;
-        if (monHz) monHz.textContent = `${hz.toFixed(1)} Hz`;
-        if (monEl) monEl.textContent = lastArduinoRxTime === 0 ? "未受信" : `${((now - lastArduinoRxTime) / 1000).toFixed(1)} 秒前`;
-        if (monPkts) monPkts.textContent = `${totalPackets} pkts`;
-        if (monRssi) monRssi.textContent = latestRssi !== null ? `${latestRssi} dBm` : "-- dBm";
-        if (monMod) monMod.textContent = arduinoSyncedModel || "UNSYNCED";
-        if (monUp) {
-          const hh = String(Math.floor(latestUptime / 3600)).padStart(2, "0");
-          const mm = String(Math.floor((latestUptime % 3600) / 60)).padStart(2, "0");
-          const ss = String(latestUptime % 60).padStart(2, "0");
-          monUp.textContent = `${hh}:${mm}:${ss}`;
-        }
-
-        if (alive) {
-          if (monR4) { monR4.textContent = "ONLINE"; monR4.className = "font-extrabold text-emerald-400 mt-1"; }
-          if (monDot) monDot.className = "w-2 h-2 rounded-full bg-emerald-400 pointer-events-none";
-
-          if (arduinoSimActive) {
-            if (srcBadge) {
-              srcBadge.textContent = "ARDUINO SIM";
-              srcBadge.className = "mono text-[10px] sm:text-xs font-extrabold px-2.5 py-1.5 rounded-lg bg-cyan-950 text-cyan-300 border border-cyan-600/70";
-            }
-            if (monCan) { monCan.textContent = "SIMULATION"; monCan.className = "font-extrabold text-cyan-300 mt-1"; }
-            if (dummyBtn) dummyBtn.className = "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold bg-cyan-950 text-cyan-200 border border-cyan-500 active:scale-95 transition";
-          } else if (arduinoCanOk) {
-            if (srcBadge) {
-              srcBadge.textContent = "REAL ECU LIVE";
-              srcBadge.className = "mono text-[10px] sm:text-xs font-extrabold px-2.5 py-1.5 rounded-lg bg-emerald-950 text-emerald-300 border border-emerald-500/70";
-            }
-            if (monCan) { monCan.textContent = "CAN + GPS LIVE"; monCan.className = "font-extrabold text-emerald-400 mt-1"; }
-            if (dummyBtn) dummyBtn.className = "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-700 active:scale-95 transition";
-          } else {
-            if (srcBadge) {
-              srcBadge.textContent = "REAL GPS ONLY";
-              srcBadge.className = "mono text-[10px] sm:text-xs font-extrabold px-2.5 py-1.5 rounded-lg bg-amber-950 text-amber-300 border border-amber-500/70";
-            }
-            if (monCan) { monCan.textContent = "GPS ONLY (CAN待機)"; monCan.className = "font-extrabold text-amber-300 mt-1"; }
-            if (dummyBtn) dummyBtn.className = "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-700 active:scale-95 transition";
-          }
-        } else if (localDemoTimer) {
-          if (srcBadge) {
-            srcBadge.textContent = "LOCAL DEMO";
-            srcBadge.className = "mono text-[10px] sm:text-xs font-extrabold px-2.5 py-1.5 rounded-lg bg-indigo-950 text-indigo-300 border border-indigo-500/70";
-          }
-        } else {
-          if (monR4) { monR4.textContent = "OFFLINE / WAIT"; monR4.className = "font-extrabold text-rose-400 mt-1"; }
-          if (monCan) { monCan.textContent = "STANDBY"; monCan.className = "font-extrabold text-slate-400 mt-1"; }
-          if (monDot) monDot.className = "w-2 h-2 rounded-full bg-amber-400 pointer-events-none";
-          if (srcBadge) {
-            srcBadge.textContent = "STANDBY";
-            srcBadge.className = "mono text-[10px] sm:text-xs font-extrabold px-2.5 py-1.5 rounded-lg bg-slate-800 text-slate-300 border border-slate-700";
-          }
-        }
-
-        const dbgPill = document.getElementById("dbgR4OnlinePill");
-        if (dbgPill) {
-          dbgPill.textContent = alive ? "ONLINE" : "OFFLINE";
-          dbgPill.className = alive
-            ? "mono text-xs font-extrabold px-2.5 py-1 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-500/70"
-            : "mono text-xs font-extrabold px-2.5 py-1 rounded-full bg-rose-950 text-rose-300 border border-rose-600/70";
-        }
-        const dbgCan = document.getElementById("dbgCanState");
-        if (dbgCan) {
-          dbgCan.textContent = !alive ? "--" : arduinoCanOk ? "1 (CAN通信確立)" : "0 (未確立 / 待機)";
-          dbgCan.className = arduinoCanOk ? "text-sm text-emerald-400" : "text-sm text-rose-400";
-        }
-        const dbgSim = document.getElementById("dbgSimState");
-        if (dbgSim) {
-          dbgSim.textContent = !alive ? "--" : arduinoSimActive ? "1 (デモモード)" : "0 (実車モード)";
-          dbgSim.className = arduinoSimActive ? "text-sm text-cyan-300" : "text-sm text-amber-300";
-        }
-        const dbgGps = document.getElementById("dbgGpsState");
-        if (dbgGps) {
-          dbgGps.textContent = !alive ? "--" : arduinoGpsFix ? `1 (3D測位 / ${arduinoGpsSats}衛星)` : `0 (待機 / ${arduinoGpsSats}衛星)`;
-          dbgGps.className = arduinoGpsFix ? "text-sm text-emerald-400" : "text-sm text-amber-300";
-        }
-        const dbgMod = document.getElementById("dbgModelState");
-        if (dbgMod) dbgMod.textContent = arduinoSyncedModel || "UNSYNCED";
-        const dbgRs = document.getElementById("dbgRssiState");
-        if (dbgRs) dbgRs.textContent = latestRssi !== null ? `${latestRssi} dBm` : "-- dBm";
-        const dbgHzUp = document.getElementById("dbgHzUptimeState");
-        if (dbgHzUp) dbgHzUp.textContent = `${hz.toFixed(1)}Hz / ${latestUptime}s`;
-      }
-
-      // ================= 12. ブラウザ内蔵 FSW デモ走行エンジン =================
-      function startLocalDemo() {
-        if (localDemoTimer) return;
-        demoDistM = 4080;
-        demoPrevSpd = 105;
-        const btnDrawer = document.getElementById("demoToggleBtn");
-        const btnLap = document.getElementById("lapPageDemoBtn");
-        if (btnDrawer) {
-          btnDrawer.textContent = "ON";
-          btnDrawer.className = "px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-600 text-white border border-emerald-400";
-        }
-        if (btnLap) btnLap.textContent = "⏹ デモ停止";
-        appendLog(`FSWローカルデモ走行開始 (${demoSpeedMult}x)`);
-
-        localDemoTimer = setInterval(() => {
-          const prof = VEHICLE_PROFILES[currentModel] || VEHICLE_PROFILES.GRECALE;
-          const dt = 0.1 * demoSpeedMult;
-          const st = getFswStateAtDist(demoDistM);
-          const ahead = getFswStateAtDist(demoDistM + 170);
-
-          const corner = FSW_CORNERS.find((c) => st.distM >= c.startM && st.distM <= c.endM);
-          const aheadCorner = FSW_CORNERS.find((c) => ahead.distM >= c.startM && ahead.distM <= c.endM);
-          const powerScale = Math.max(0.88, Math.min(1.06, prof.maxBoost / 1.95));
-
-          let tgtSpd = corner ? corner.targetSpd * powerScale : 292 * powerScale;
-          let aheadSpd = aheadCorner ? aheadCorner.targetSpd * powerScale : 292 * powerScale;
-
-          const curSpd = demoPrevSpd * 0.4 + tgtSpd * 0.6;
-          demoPrevSpd = curSpd;
-
-          let brk = 0, ped = 0;
-          if (curSpd - aheadSpd > 14) {
-            brk = Math.min(100, (curSpd - aheadSpd) * 1.4);
-            ped = 0;
-          } else {
-            brk = 0;
-            ped = Math.max(25, Math.min(100, 75 + (aheadSpd - curSpd) * 2.2));
-          }
-
-          const gear = curSpd < 72 ? 2 : curSpd < 118 ? 3 : curSpd < 164 ? 4 : curSpd < 214 ? 5 : curSpd < 262 ? 6 : 7;
-          const gBounds = [0, 0, 72, 118, 164, 214, 262, 315];
-          const gRatio = Math.max(0, Math.min(1, (curSpd - gBounds[gear - 1]) / Math.max(15, gBounds[gear] - gBounds[gear - 1])));
-          const rpm = Math.round(3300 + gRatio * (prof.redline - 3000));
-
-          const vMs = curSpd / 3.6;
-          const gx = Math.max(-1.45, Math.min(1.45, -(vMs * vMs * st.curvature) / 9.81 * 1.15));
-          const gy = brk > 5 ? -Math.min(1.4, brk / 72) : Math.min(0.85, (ped / 100) * 0.65);
-
-          const leftLoad = Math.max(0, gx);
-          const rightLoad = Math.max(0, -gx);
-          const heatIn = [
-            (leftLoad * 2.4 + (brk / 100) * 1.5) * dt,
-            (rightLoad * 2.4 + (brk / 100) * 1.5) * dt,
-            (leftLoad * 2.2 + (ped / 100) * (prof.isRwdOnly ? 1.4 : 0.9)) * dt,
-            (rightLoad * 2.2 + (ped / 100) * (prof.isRwdOnly ? 1.4 : 0.9)) * dt
-          ];
-          const baseP = [prof.baseTpF, prof.baseTpF, prof.baseTpR, prof.baseTpR];
-          const tp = [];
-          for (let w = 0; w < 4; w++) {
-            const eq = w < 2 ? 64 : 67;
-            simTireTemps[w] = Math.max(38, Math.min(104, simTireTemps[w] + heatIn[w] - (simTireTemps[w] - eq) * 0.04 * dt));
-            tp.push(baseP[w] * ((simTireTemps[w] + 273.15) / 298.15));
-          }
-
-          const pkt = {
-            can_ok: 0,
-            sim: 1,
-            rpm,
-            spd: Math.round(curSpd),
-            gear,
-            bst: ped > 12 ? (ped / 100) * prof.maxBoost * (0.45 + 0.55 * gRatio) : -0.60,
-            lod: 20 + ped * 0.78,
-            ped,
-            thr: ped * 0.97,
-            brk,
-            oil: 104 + Math.sin(demoDistM * 0.001) * 3.5,
-            tra: 92 + Math.cos(demoDistM * 0.001) * 2.5,
-            wat: 91,
-            iat: 32,
-            ign: 14,
-            afr: ped > 75 ? 0.83 : 1.00,
-            bat: 14.2,
-            str: gx * 65,
-            awd_f: prof.isRwdOnly ? 0 : (brk > 10 ? 0 : Math.min(50, Math.round(prof.defaultFront + (ped / 100) * 14))),
-            lsd_l: Math.round(50 + gx * 18),
-            gx,
-            gy,
-            lat: st.lat,
-            lng: st.lng,
-            tp,
-            tt: [...simTireTemps]
-          };
-
-          updateDashboardUI(pkt);
-          if (lapSession.active) recordTelemetrySample(pkt);
-
-          demoDistM += vMs * dt;
-          if (demoDistM >= FSW_LENGTH_M) demoDistM -= FSW_LENGTH_M;
-        }, 100);
-      }
-
-      function stopLocalDemo() {
-        if (!localDemoTimer) return;
-        clearInterval(localDemoTimer);
-        localDemoTimer = null;
-        const btnDrawer = document.getElementById("demoToggleBtn");
-        const btnLap = document.getElementById("lapPageDemoBtn");
-        if (btnDrawer) {
-          btnDrawer.textContent = "OFF";
-          btnDrawer.className = "px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-800 text-slate-300 border border-slate-700";
-        }
-        if (btnLap) btnLap.textContent = "▶ FSWデモ走行";
-      }
-
-      // ================= 13. ラップ計測＆複数データ比較分析 =================
-      function segmentsIntersect(a1, a2, b1, b2) {
-        const ccw = (p1, p2, p3) => (p3.lat - p1.lat) * (p2.lng - p1.lng) > (p2.lat - p1.lat) * (p3.lng - p1.lng);
-        return (ccw(a1, b1, b2) !== ccw(a2, b1, b2)) && (ccw(a1, a2, b1) !== ccw(a1, a2, b2));
-      }
-
-      function startLapTiming() {
-        lapSession.active = true;
-        lapSession.inPrepLap = true;
-        lapSession.lapNumber = 0;
-        lapSession.lapStartTime = performance.now();
-        lapSession.lastCrossTime = performance.now();
-        lapSession.lastDistM = null;
-        lapSession.sectorFlags = [false, false];
-        lapSession.sectorSplitTimes = [0, 0];
-        lapSession.currentSamples = [];
-
-        document.getElementById("btnStartTiming").disabled = true;
-        document.getElementById("btnStopTiming").disabled = false;
-        document.getElementById("btnStopTiming").className = "py-3 px-4 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-black text-sm shadow-lg transition";
-        document.getElementById("recStateBadge").textContent = "PREP LAP";
-        document.getElementById("recStateBadge").className = "mono text-xs font-extrabold px-2.5 py-1 rounded-full bg-amber-950 text-amber-300 border border-amber-500/70";
-        document.getElementById("recLapLabel").textContent = "PREP LAP (S/F通過待ち)";
-        document.getElementById("topLapRecDot").className = "w-2 h-2 rounded-full bg-emerald-300 animate-ping pointer-events-none";
-
-        showLapToast("計測開始：S/Fコントロールライン通過で LAP 1 の本計測へ自動移行します");
-        if (!chronoAnimId) runChronoLoop();
-      }
-
-      function stopLapTiming() {
-        lapSession.active = false;
-        document.getElementById("btnStartTiming").disabled = false;
-        document.getElementById("btnStopTiming").disabled = true;
-        document.getElementById("btnStopTiming").className = "py-3 px-4 rounded-xl bg-slate-800 text-slate-500 border border-slate-700 font-black text-sm transition disabled:opacity-50";
-        document.getElementById("recStateBadge").textContent = "STOPPED";
-        document.getElementById("recStateBadge").className = "mono text-xs font-extrabold px-2.5 py-1 rounded-full bg-slate-800 text-slate-300 border border-slate-700";
-        document.getElementById("topLapRecDot").className = "w-2 h-2 rounded-full bg-white/80 pointer-events-none";
-        if (chronoAnimId) {
-          cancelAnimationFrame(chronoAnimId);
-          chronoAnimId = null;
-        }
-        if (lapSession.recordedLaps.length > 0) {
-          switchLapSubTab("analyzer");
-        }
-      }
-
-      function runChronoLoop() {
-        if (!lapSession.active) return;
-        const elapsed = performance.now() - lapSession.lapStartTime;
-        document.getElementById("recCurrentTime").textContent = formatLapMs(elapsed);
-        chronoAnimId = requestAnimationFrame(runChronoLoop);
-      }
-
-      function recordTelemetrySample(d) {
-        const now = performance.now();
-        const proj = projectToFswDist(Number(d.lat), Number(d.lng));
-        const distM = proj.distM;
-        const elapsed = now - lapSession.lapStartTime;
-
-        document.getElementById("recLiveDist").textContent = `${Math.round(distM)} m / ${FSW_LENGTH_M} m`;
-        document.getElementById("recCurrentCorner").textContent = getCornerNameAtDist(distM);
-
-        if (!lapSession.inPrepLap) {
-          if (!lapSession.sectorFlags[0] && distM >= FSW_SECTORS_M[0] && distM < FSW_SECTORS_M[1]) {
-            lapSession.sectorFlags[0] = true;
-            lapSession.sectorSplitTimes[0] = elapsed;
-            document.getElementById("recS1").textContent = formatSec(elapsed / 1000);
-          }
-          if (!lapSession.sectorFlags[1] && distM >= FSW_SECTORS_M[1] && distM < FSW_SECTORS_M[2] - 200) {
-            lapSession.sectorFlags[1] = true;
-            lapSession.sectorSplitTimes[1] = elapsed;
-            document.getElementById("recS2").textContent = formatSec((elapsed - lapSession.sectorSplitTimes[0]) / 1000);
-          }
-        }
-
-        const prevSample = lapSession.currentSamples[lapSession.currentSamples.length - 1];
-        const sample = {
-          tMs: elapsed,
-          distM,
-          lat: Number(d.lat),
-          lng: Number(d.lng),
-          spd: Number(d.spd) || 0,
-          rpm: Number(d.rpm) || 0,
-          gear: Number(d.gear) || 0,
-          ped: Number(d.ped) || 0,
-          brk: Number(d.brk) || 0,
-          gx: Number(d.gx) || 0,
-          gy: Number(d.gy) || 0
-        };
-        lapSession.currentSamples.push(sample);
-        document.getElementById("recSampleCount").textContent = lapSession.currentSamples.length;
-
-        let crossed = false;
-        if (prevSample && controlLine && (now - lapSession.lastCrossTime > 6000)) {
-          if (segmentsIntersect(
-            { lat: prevSample.lat, lng: prevSample.lng },
-            { lat: sample.lat, lng: sample.lng },
-            controlLine.p1,
-            controlLine.p2
-          )) {
-            crossed = true;
-          }
-        }
-        if (!crossed && lapSession.lastDistM !== null && (now - lapSession.lastCrossTime > 6000)) {
-          if (lapSession.lastDistM > 3900 && distM < 600) crossed = true;
-        }
-        lapSession.lastDistM = distM;
-
-        if (crossed) {
-          lapSession.lastCrossTime = now;
-          if (lapSession.inPrepLap) {
-            lapSession.inPrepLap = false;
-            lapSession.lapNumber = 1;
-            lapSession.lapStartTime = now;
-            lapSession.sectorFlags = [false, false];
-            lapSession.sectorSplitTimes = [0, 0];
-            lapSession.currentSamples = [{ ...sample, tMs: 0, distM: 0 }];
-            document.getElementById("recStateBadge").textContent = "RECORDING";
-            document.getElementById("recStateBadge").className = "mono text-xs font-extrabold px-2.5 py-1 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-500/70";
-            document.getElementById("recLapLabel").textContent = "LAP 1 (LIVE)";
-            showLapToast("🏁 S/Fライン通過！LAP 1 の本計測を開始しました");
-          } else {
-            finalizeCompletedLap(elapsed);
-            lapSession.lapNumber += 1;
-            lapSession.lapStartTime = now;
-            lapSession.sectorFlags = [false, false];
-            lapSession.sectorSplitTimes = [0, 0];
-            lapSession.currentSamples = [{ ...sample, tMs: 0, distM: 0 }];
-            document.getElementById("recLapLabel").textContent = `LAP ${lapSession.lapNumber} (LIVE)`;
-          }
-        }
-      }
-
-      function finalizeCompletedLap(totalMs) {
-        const s1 = lapSession.sectorSplitTimes[0] || totalMs * 0.34;
-        const s2 = lapSession.sectorSplitTimes[1] ? (lapSession.sectorSplitTimes[1] - s1) : totalMs * 0.34;
-        const s3 = Math.max(1000, totalMs - s1 - s2);
-        document.getElementById("recS3").textContent = formatSec(s3 / 1000);
-
-        const topSpd = lapSession.currentSamples.reduce((m, s) => Math.max(m, s.spd), 0);
-        const lapObj = {
-          id: `live-${Date.now()}-${lapSession.lapNumber}`,
-          label: `LAP ${lapSession.lapNumber} (${VEHICLE_PROFILES[currentModel]?.name || currentModel})`,
-          vehicle: currentModel,
-          lapNumber: lapSession.lapNumber,
-          totalMs,
-          sectorsMs: [s1, s2, s3],
-          topSpeed: topSpd,
-          samples: lapSession.currentSamples.map((s) => ({ ...s }))
-        };
-
-        lapSession.recordedLaps.push(lapObj);
-        sessionRepository.push(lapObj);
-
-        if (!lapSession.bestLap || totalMs < lapSession.bestLap.totalMs) {
-          lapSession.bestLap = lapObj;
-          document.getElementById("recBestLap").textContent = formatLapMs(totalMs);
-        }
-        document.getElementById("recLastLap").textContent = formatLapMs(totalMs);
-
-        [s1, s2, s3].forEach((secVal, idx) => {
-          if (secVal < lapSession.bestSectors[idx]) lapSession.bestSectors[idx] = secVal;
-        });
-        const theo = lapSession.bestSectors.reduce((a, b) => a + b, 0);
-        if (Number.isFinite(theo)) document.getElementById("recTheoLap").textContent = formatLapMs(theo);
-
-        renderRecordedLapsTable();
-        refreshAnalyzerSelectors();
-        showLapToast(`✓ LAP ${lapObj.lapNumber} 完了: ${formatLapMs(totalMs)} (TOP ${topSpd} km/h)`);
-      }
-
-      function renderRecordedLapsTable() {
-        const tbody = document.getElementById("recLapTableBody");
-        const cntLbl = document.getElementById("recLapCountLbl");
-        if (cntLbl) cntLbl.textContent = `${lapSession.recordedLaps.length} Laps`;
-        if (!tbody || lapSession.recordedLaps.length === 0) return;
-
-        const bestMs = lapSession.bestLap ? lapSession.bestLap.totalMs : Infinity;
-        tbody.innerHTML = lapSession.recordedLaps.slice().reverse().map((l) => {
-          const diff = l.totalMs - bestMs;
-          const diffStr = diff === 0 ? "BEST" : `+${(diff / 1000).toFixed(3)}s`;
-          const diffCls = diff === 0 ? "text-emerald-400 font-bold" : "text-amber-300";
-          return `
-            <tr>
-              <td class="py-1.5 px-2 font-bold">L${l.lapNumber}</td>
-              <td class="py-1.5 px-2">${formatLapMs(l.totalMs)}</td>
-              <td class="py-1.5 px-2 ${diffCls}">${diffStr}</td>
-              <td class="py-1.5 px-2 text-right">${l.topSpeed} km/h</td>
-            </tr>`;
-        }).join("");
-      }
-
-      function generateSampleCompareLaps() {
-        const buildSyntheticLap = (id, label, timeFactor, cornerPenalty) => {
-          const samples = [];
-          let tMs = 0;
-          const stepM = 25;
-          for (let d = 0; d <= FSW_LENGTH_M; d += stepM) {
-            const st = getFswStateAtDist(d);
-            const c = FSW_CORNERS.find((item) => d >= item.startM && d <= item.endM);
-            let spd = c ? (c.targetSpd - cornerPenalty) : 286;
-            spd = Math.max(58, spd * timeFactor);
-            const vMs = spd / 3.6;
-            if (d > 0) tMs += (stepM / vMs) * 1000;
-            samples.push({
-              tMs,
-              distM: d,
-              lat: st.lat + (cornerPenalty * 0.000003),
-              lng: st.lng + (cornerPenalty * 0.000003),
-              spd: Math.round(spd),
-              rpm: Math.round(3600 + (spd / 290) * 4200),
-              gear: spd < 80 ? 2 : spd < 130 ? 3 : spd < 180 ? 4 : spd < 230 ? 5 : 6,
-              ped: c ? 35 : 100,
-              brk: c ? 65 : 0,
-              gx: -(vMs * vMs * st.curvature) / 9.81,
-              gy: c ? -0.85 : 0.45
-            });
-          }
-          const topSpeed = samples.reduce((m, s) => Math.max(m, s.spd), 0);
-          return {
-            id,
-            label,
-            vehicle: currentModel,
-            lapNumber: demoLapSeed++,
-            totalMs: tMs,
-            sectorsMs: [tMs * 0.33, tMs * 0.34, tMs * 0.33],
-            topSpeed,
-            samples
-          };
-        };
-
-        const lapA = buildSyntheticLap(`sample-a-${Date.now()}`, `FSW ベスト参考 (1:46台)`, 1.02, 0);
-        const lapB = buildSyntheticLap(`sample-b-${Date.now() + 1}`, `FSW 比較走行 (T1・ヘアピン課題)`, 0.985, 7);
-        sessionRepository.push(lapA, lapB);
-        selectedRefLapId = lapA.id;
-        selectedCmpLapId = lapB.id;
-        refreshAnalyzerSelectors();
-        renderAnalyzerComparison();
-        showLapToast("✨ FSW比較サンプル2ラップを生成しました");
-      }
-
-      function refreshAnalyzerSelectors() {
-        const selA = document.getElementById("selectRefLap");
-        const selB = document.getElementById("selectCmpLap");
-        const repoCnt = document.getElementById("repoSessionCount");
-        const repoList = document.getElementById("sessionRepoList");
-        if (repoCnt) repoCnt.textContent = `${sessionRepository.length} Sessions`;
-
-        if (repoList) {
-          repoList.innerHTML = sessionRepository.map((s) =>
-            `<span class="px-2 py-0.5 rounded bg-slate-900 border border-slate-700 mono text-slate-300">${escapeHtml(s.label)} (${formatLapMs(s.totalMs)})</span>`
-          ).join("");
-        }
-
-        if (!selA || !selB) return;
-        const opts = sessionRepository.map((s) =>
-          `<option value="${s.id}">${escapeHtml(s.label)} — ${formatLapMs(s.totalMs)}</option>`
-        ).join("");
-        selA.innerHTML = opts || `<option value="">データなし</option>`;
-        selB.innerHTML = opts || `<option value="">データなし</option>`;
-
-        if (selectedRefLapId && sessionRepository.some((s) => s.id === selectedRefLapId)) selA.value = selectedRefLapId;
-        else if (sessionRepository.length > 0) { selectedRefLapId = sessionRepository[0].id; selA.value = selectedRefLapId; }
-
-        if (selectedCmpLapId && sessionRepository.some((s) => s.id === selectedCmpLapId)) selB.value = selectedCmpLapId;
-        else if (sessionRepository.length > 1) { selectedCmpLapId = sessionRepository[1].id; selB.value = selectedCmpLapId; }
-        else if (sessionRepository.length === 1) { selectedCmpLapId = sessionRepository[0].id; selB.value = selectedCmpLapId; }
-      }
-
-      function sampleAtDist(samples, targetDist) {
-        if (!samples || samples.length === 0) return null;
-        if (targetDist <= samples[0].distM) return samples[0];
-        if (targetDist >= samples[samples.length - 1].distM) return samples[samples.length - 1];
-        for (let i = 0; i < samples.length - 1; i++) {
-          const s1 = samples[i];
-          const s2 = samples[i + 1];
-          if (targetDist >= s1.distM && targetDist <= s2.distM) {
-            const r = (targetDist - s1.distM) / Math.max(0.1, s2.distM - s1.distM);
-            return {
-              tMs: s1.tMs + (s2.tMs - s1.tMs) * r,
-              distM: targetDist,
-              lat: s1.lat + (s2.lat - s1.lat) * r,
-              lng: s1.lng + (s2.lng - s1.lng) * r,
-              spd: s1.spd + (s2.spd - s1.spd) * r,
-              rpm: s1.rpm + (s2.rpm - s1.rpm) * r,
-              ped: s1.ped + (s2.ped - s1.ped) * r,
-              brk: s1.brk + (s2.brk - s1.brk) * r,
-              gx: s1.gx + (s2.gx - s1.gx) * r,
-              gy: s1.gy + (s2.gy - s1.gy) * r
-            };
-          }
-        }
-        return samples[samples.length - 1];
-      }
-
-      function renderAnalyzerComparison() {
-        const lapA = sessionRepository.find((s) => s.id === selectedRefLapId);
-        const lapB = sessionRepository.find((s) => s.id === selectedCmpLapId);
-        if (!lapA || !lapB) return;
-
-        document.getElementById("anRefTime").textContent = formatLapMs(lapA.totalMs);
-        document.getElementById("anRefMeta").textContent = lapA.label;
-        document.getElementById("anCmpTime").textContent = formatLapMs(lapB.totalMs);
-        document.getElementById("anCmpMeta").textContent = lapB.label;
-
-        const diffMs = lapB.totalMs - lapA.totalMs;
-        const diffEl = document.getElementById("anTotalDelta");
-        diffEl.textContent = `${diffMs >= 0 ? "+" : ""}${(diffMs / 1000).toFixed(3)} s`;
-        diffEl.className = diffMs <= 0 ? "mono text-lg font-black text-emerald-400" : "mono text-lg font-black text-rose-400";
-
-        const spdDiff = lapB.topSpeed - lapA.topSpeed;
-        document.getElementById("anTopSpeedDiff").textContent = `${spdDiff >= 0 ? "+" : ""}${spdDiff} km/h`;
-        document.getElementById("anTopSpeedDetail").textContent = `A:${lapA.topSpeed} / B:${lapB.topSpeed}`;
-
-        const grid = document.getElementById("cornerCoachingGrid");
-        let worstCorner = null;
-        let worstLoss = -Infinity;
-
-        grid.innerHTML = FSW_CORNERS.map((c) => {
-          const aStart = sampleAtDist(lapA.samples, c.startM);
-          const aEnd = sampleAtDist(lapA.samples, c.endM);
-          const bStart = sampleAtDist(lapB.samples, c.startM);
-          const bEnd = sampleAtDist(lapB.samples, c.endM);
-          const aTime = (aEnd && aStart) ? (aEnd.tMs - aStart.tMs) : 0;
-          const bTime = (bEnd && bStart) ? (bEnd.tMs - bStart.tMs) : 0;
-          const lossSec = (bTime - aTime) / 1000;
-          if (lossSec > worstLoss) {
-            worstLoss = lossSec;
-            worstCorner = c;
-          }
-          const aApex = sampleAtDist(lapA.samples, c.apexM);
-          const bApex = sampleAtDist(lapB.samples, c.apexM);
-          const apexDiff = (bApex && aApex) ? Math.round(bApex.spd - aApex.spd) : 0;
-          const selCls = focusedCornerId === c.id ? "selected" : "";
-
-          return `
-            <div data-action="focus-corner" data-corner="${c.id}" class="corner-card ${selCls} cursor-pointer p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-1.5">
-              <div class="flex justify-between items-center pointer-events-none">
-                <strong class="text-xs sm:text-sm text-white">${c.name}</strong>
-                <span class="mono text-xs font-extrabold ${lossSec > 0.05 ? "text-rose-400" : "text-emerald-400"}">${lossSec >= 0 ? "+" : ""}${lossSec.toFixed(3)}s</span>
-              </div>
-              <p class="mono text-[11px] text-slate-400 pointer-events-none">ボトム速度差: <strong class="text-sky-300">${apexDiff >= 0 ? "+" : ""}${apexDiff} km/h</strong> (目標 ${c.targetSpd}km/h)</p>
-              <p class="text-[11px] text-slate-300 pointer-events-none">${lossSec > 0.08 ? "進入ブレーキングを奥まで我慢し旋回ボトムを高めるとタイム短縮可能" : "基準ラップと同等以上のスムーズな旋回速度を維持"}</p>
-            </div>`;
-        }).join("");
-
-        if (worstCorner) {
-          document.getElementById("anBiggestLossCorner").textContent = worstCorner.name;
-          document.getElementById("anBiggestLossTime").textContent = `ロス: +${worstLoss.toFixed(3)}s`;
-        }
-
-        const anEl = document.getElementById("analyzerLeafletMap");
-        if (anEl && typeof L !== "undefined") {
-          if (!anMap) {
-            anMap = L.map(anEl, { zoomControl: true, attributionControl: false }).setView([35.3695, 138.9275], 15);
-            anTile = createTileLayer(mapStyleMode).addTo(anMap);
-          }
-          if (anRefPoly) anMap.removeLayer(anRefPoly);
-          if (anCmpPoly) anMap.removeLayer(anCmpPoly);
-          anRefPoly = L.polyline(lapA.samples.map((s) => [s.lat, s.lng]), { color: "#10b981", weight: 4 }).addTo(anMap);
-          anCmpPoly = L.polyline(lapB.samples.map((s) => [s.lat, s.lng]), { color: "#38bdf8", weight: 3, dashArray: "6,4" }).addTo(anMap);
-          anMap.invalidateSize();
-        }
-
-        drawOverlayTelemetryChart(lapA, lapB);
-      }
-
-      function drawOverlayTelemetryChart(lapA, lapB) {
-        const canvas = document.getElementById("telemetryCompareCanvas");
-        if (!canvas) return;
-        const rect = canvas.parentElement.getBoundingClientRect();
-        if (rect.width === 0 || rect.height === 0) return;
-        const dpr = window.devicePixelRatio || 1;
-        canvas.width = rect.width * dpr;
-        canvas.height = rect.height * dpr;
-        const ctx = canvas.getContext("2d");
-        ctx.scale(dpr, dpr);
-
-        const w = rect.width;
-        const h = rect.height;
-        const padL = 44, padR = 16, padT = 18, padB = 26;
-        const plotW = w - padL - padR;
-        const plotH = h - padT - padB;
-
-        ctx.clearRect(0, 0, w, h);
-
-        let dStart = 0, dEnd = FSW_LENGTH_M;
-        if (focusedCornerId) {
-          const fc = FSW_CORNERS.find((c) => c.id === focusedCornerId);
-          if (fc) { dStart = Math.max(0, fc.startM - 150); dEnd = Math.min(FSW_LENGTH_M, fc.endM + 150); }
-        }
-        const span = Math.max(100, dEnd - dStart);
-
-        ctx.strokeStyle = "rgba(51, 65, 85, 0.45)";
-        ctx.lineWidth = 1;
-        [0, 100, 200, 300].forEach((spdTick) => {
-          const y = padT + plotH * 0.55 * (1 - spdTick / 320);
-          ctx.beginPath();
-          ctx.moveTo(padL, y);
-          ctx.lineTo(w - padR, y);
-          ctx.stroke();
-          ctx.fillStyle = "#64748b";
-          ctx.font = "10px JetBrains Mono";
-          ctx.fillText(String(spdTick), 6, y + 3);
-        });
-
-        const drawSpeedLine = (samples, color) => {
-          ctx.strokeStyle = color;
-          ctx.lineWidth = 2.2;
-          ctx.beginPath();
-          let started = false;
-          for (let d = dStart; d <= dEnd; d += 15) {
-            const s = sampleAtDist(samples, d);
-            if (!s) continue;
-            const x = padL + ((d - dStart) / span) * plotW;
-            const y = padT + plotH * 0.55 * (1 - s.spd / 320);
-            if (!started) { ctx.moveTo(x, y); started = true; }
-            else ctx.lineTo(x, y);
-          }
-          ctx.stroke();
-        };
-        drawSpeedLine(lapA.samples, "#10b981");
-        drawSpeedLine(lapB.samples, "#38bdf8");
-
-        const subTop = padT + plotH * 0.62;
-        const subH = plotH * 0.35;
-        ctx.strokeStyle = "rgba(148, 163, 184, 0.3)";
-        ctx.strokeRect(padL, subTop, plotW, subH);
-
-        ctx.strokeStyle = activeSubChartMode === "rpm" ? "#f59e0b" : "#f43f5e";
-        ctx.lineWidth = 1.8;
-        ctx.beginPath();
-        let startedSub = false;
-        for (let d = dStart; d <= dEnd; d += 15) {
-          const s = sampleAtDist(lapB.samples, d);
-          if (!s) continue;
-          const x = padL + ((d - dStart) / span) * plotW;
-          const norm = activeSubChartMode === "rpm"
-            ? Math.min(1, s.rpm / 8500)
-            : Math.max(0, Math.min(1, (s.gx + 1.5) / 3.0));
-          const y = subTop + subH * (1 - norm);
-          if (!startedSub) { ctx.moveTo(x, y); startedSub = true; }
-          else ctx.lineTo(x, y);
-        }
-        ctx.stroke();
-
-        if (chartHoverDist !== null && chartHoverDist >= dStart && chartHoverDist <= dEnd) {
-          const hx = padL + ((chartHoverDist - dStart) / span) * plotW;
-          ctx.strokeStyle = "rgba(255,255,255,0.7)";
-          ctx.beginPath();
-          ctx.moveTo(hx, padT);
-          ctx.lineTo(hx, padT + plotH);
-          ctx.stroke();
-        }
-      }
-
-      // ================= 14. 車種切替・モーダル・画面遷移制御 =================
-      function buildDrawerVehicleButtons() {
-        const list = document.getElementById("vehicleProfileList");
-        if (!list) return;
-        list.innerHTML = Object.entries(VEHICLE_PROFILES).map(([key, p]) => {
-          const active = key === currentModel;
-          const cls = active
-            ? "border-rose-500 bg-rose-950/35 text-white shadow-md"
-            : "border-slate-800 bg-slate-900/90 hover:bg-slate-800 text-slate-300";
-          return `
-            <button type="button" data-action="select-vehicle" data-model="${key}" class="w-full text-left p-3 rounded-xl border ${cls} transition flex items-center justify-between">
-              <div class="pointer-events-none">
-                <p class="text-xs sm:text-sm font-black">${p.name}</p>
-                <p class="text-[10px] text-slate-400 mt-0.5">${p.sub}</p>
-              </div>
-              <span class="mono text-[10px] font-bold px-2 py-0.5 rounded bg-black/50 text-cyan-300 pointer-events-none">${p.drive}</span>
-            </button>`;
-        }).join("");
-      }
-
-      function selectVehicleModel(modelKey, sendCmd = true) {
-        if (!VEHICLE_PROFILES[modelKey]) return;
-        currentModel = modelKey;
-        const p = VEHICLE_PROFILES[modelKey];
-        document.getElementById("headerVehicleName").textContent = p.name;
-        document.getElementById("headerDriveBadge").textContent = p.drive;
-        document.getElementById("headerVehicleSub").textContent = p.sub;
-        document.getElementById("brandAccentBar").style.backgroundColor = p.color;
-        document.getElementById("rpmMidLbl").textContent = Math.round(p.maxRpm / 2);
-        document.getElementById("rpmRedLbl").textContent = `RED ${p.redline}`;
-
-        peakSpeed = 0;
-        maxTotalG = 0;
-        document.getElementById("peakSpeedLbl").textContent = "PEAK: 0 km/h";
-        document.getElementById("maxGLbl").textContent = "MAX: 0.00G";
-
-        const isDemoNow = Boolean(localDemoTimer) || arduinoSimActive;
-        const isZeroNow = !isDemoNow && !arduinoCanOk;
-        renderFourWheelMonitor(
-          p.defaultFront,
-          50,
-          50,
-          [p.baseTpF, p.baseTpF, p.baseTpR, p.baseTpR],
-          [25, 25, 25, 25],
-          isZeroNow
-        );
-
-        buildDrawerVehicleButtons();
-        if (sendCmd) {
-          publishMqttCommand({ set_vehicle: modelKey });
-          appendLog(`車種プロファイル変更: ${p.name}`);
-        }
-      }
-
-      function switchMainView(mode) {
-        activeViewMode = mode;
-        const liveEl = document.getElementById("liveMonitorView");
-        const lapEl = document.getElementById("lapAnalyzerView");
-        const dbgEl = document.getElementById("debugConsoleView");
-
-        liveEl.classList.add("view-hidden");
-        lapEl.classList.add("view-hidden");
-        dbgEl.classList.add("view-hidden");
-
-        if (mode === "lap") {
-          lapEl.classList.remove("view-hidden");
-          setTimeout(() => { if (recMap) recMap.invalidateSize(); }, 80);
-        } else if (mode === "debug") {
-          dbgEl.classList.remove("view-hidden");
-          updateSignalCountsUI();
-          renderSignalMatrix();
-        } else {
-          liveEl.classList.remove("view-hidden");
-          setTimeout(() => { if (miniMap) miniMap.invalidateSize(); }, 80);
-        }
-      }
-
-      function switchLapSubTab(tab) {
-        activeLapTab = tab;
-        const recTab = document.getElementById("lapRecorderTab");
-        const anTab = document.getElementById("lapAnalyzerTab");
-        const btnRec = document.getElementById("tabBtnRecorder");
-        const btnAn = document.getElementById("tabBtnAnalyzer");
-        if (tab === "analyzer") {
-          recTab.classList.add("hidden");
-          anTab.classList.remove("hidden");
-          btnRec.classList.remove("active");
-          btnAn.classList.add("active");
-          refreshAnalyzerSelectors();
-          renderAnalyzerComparison();
-        } else {
-          anTab.classList.add("hidden");
-          recTab.classList.remove("hidden");
-          btnAn.classList.remove("active");
-          btnRec.classList.add("active");
-          setTimeout(() => { if (recMap) recMap.invalidateSize(); }, 80);
-        }
-      }
-
+      // ================= 12. QRコード & 定期ステータス監視 =================
       function renderQrCodes(url) {
         if (typeof QRCode === "undefined") return;
         const mini = document.getElementById("headerMiniQr");
         const large = document.getElementById("largeQrContainer");
         if (mini) {
           mini.innerHTML = "";
-          new QRCode(mini, { text: url, width: 18, height: 18, correctLevel: QRCode.CorrectLevel.L });
+          new QRCode(mini, { text: url, width: 16, height: 16, correctLevel: QRCode.CorrectLevel.L });
         }
         if (large) {
           large.innerHTML = "";
-          new QRCode(large, { text: url, width: 230, height: 230, correctLevel: QRCode.CorrectLevel.M });
+          new QRCode(large, { text: url, width: 228, height: 228, correctLevel: QRCode.CorrectLevel.M });
         }
       }
 
-      // ================= 15. イベントデリゲーション設定 =================
-      function setupEventListeners() {
-        document.addEventListener("click", (e) => {
-          const btn = e.target.closest("[data-action]");
-          if (!btn) return;
-          const action = btn.getAttribute("data-action");
+      function updateStatusIndicators() {
+        const now = Date.now();
+        const isOnline = lastArduinoRxTime > 0 && (now - lastArduinoRxTime) < 3500;
+        rxTimestamps = rxTimestamps.filter((t) => now - t <= 2000);
+        const hz = (rxTimestamps.length / 2).toFixed(1);
 
-          if (action === "open-drawer") {
-            document.getElementById("drawerBackdrop").classList.remove("hidden");
-            document.getElementById("vehicleDrawer").classList.remove("-translate-x-full");
-          } else if (action === "close-drawer") {
-            document.getElementById("drawerBackdrop").classList.add("hidden");
-            document.getElementById("vehicleDrawer").classList.add("-translate-x-full");
-          } else if (action === "select-vehicle") {
-            selectVehicleModel(btn.getAttribute("data-model"), true);
-            document.getElementById("drawerBackdrop").classList.add("hidden");
-            document.getElementById("vehicleDrawer").classList.add("-translate-x-full");
-          } else if (action === "toggle-debug-view") {
-            switchMainView(activeViewMode === "debug" ? "live" : "debug");
-          } else if (action === "open-debug-mode-from-drawer") {
-            document.getElementById("drawerBackdrop").classList.add("hidden");
-            document.getElementById("vehicleDrawer").classList.add("-translate-x-full");
-            switchMainView("debug");
-          } else if (action === "toggle-lap-view") {
-            switchMainView(activeViewMode === "lap" ? "live" : "lap");
-          } else if (action === "open-lap-mode-from-drawer") {
-            document.getElementById("drawerBackdrop").classList.add("hidden");
-            document.getElementById("vehicleDrawer").classList.add("-translate-x-full");
-            switchMainView("lap");
-          } else if (action === "return-live-view") {
-            switchMainView("live");
-          } else if (action === "switch-lap-tab") {
-            switchLapSubTab(btn.getAttribute("data-tab"));
-          } else if (action === "toggle-r4-dummy") {
-            const nextSim = arduinoSimActive ? "0" : "1";
-            publishMqttCommand({ set_sim: nextSim });
-          } else if (action === "set-r4-sim-on") {
-            publishMqttCommand({ set_sim: "1" });
-          } else if (action === "set-r4-sim-off") {
-            publishMqttCommand({ set_sim: "0" });
-          } else if (action === "send-ping") {
-            pendingPingTs = Date.now();
-            publishMqttCommand({ ping: 1 });
-          } else if (action === "send-uds-scan") {
-            publishMqttCommand({ cmd: "uds_scan" });
-          } else if (action === "reset-peaks") {
-            peakSpeed = 0;
-            maxTotalG = 0;
-            document.getElementById("peakSpeedLbl").textContent = "PEAK: 0 km/h";
-            document.getElementById("maxGLbl").textContent = "MAX: 0.00G";
-            appendLog("ピーク値をリセットしました");
-          } else if (action === "toggle-local-demo") {
-            if (localDemoTimer) stopLocalDemo();
-            else startLocalDemo();
-          } else if (action === "cycle-demo-speed") {
-            demoSpeedMult = demoSpeedMult === 1 ? 2 : demoSpeedMult === 2 ? 4 : 1;
-            document.getElementById("demoSpeedBtn").textContent = `${demoSpeedMult}x`;
-          } else if (action === "open-monitor-modal") {
-            const m = document.getElementById("monitorModal");
-            m.classList.remove("hidden");
-            m.classList.add("flex");
-          } else if (action === "close-monitor-modal") {
-            const m = document.getElementById("monitorModal");
-            m.classList.add("hidden");
-            m.classList.remove("flex");
-          } else if (action === "open-qr-modal") {
-            const m = document.getElementById("qrModal");
-            m.classList.remove("hidden");
-            m.classList.add("flex");
-          } else if (action === "close-qr-modal") {
-            const m = document.getElementById("qrModal");
-            m.classList.add("hidden");
-            m.classList.remove("flex");
-          } else if (action === "open-full-map") {
-            const m = document.getElementById("fullMapModal");
-            m.classList.remove("hidden");
-            m.classList.add("flex");
-            const el = document.getElementById("fullLeafletMap");
-            if (el && typeof L !== "undefined" && !fullMap) {
-              fullMap = L.map(el).setView([lastLat, lastLng], 16);
-              fullTile = createTileLayer(mapStyleMode).addTo(fullMap);
-              fullPoly = L.polyline(trackPoints, { color: "#38bdf8", weight: 4 }).addTo(fullMap);
-              fullMarker = L.marker([lastLat, lastLng], { icon: createCarIcon() }).addTo(fullMap);
-            }
-            setTimeout(() => { if (fullMap) fullMap.invalidateSize(); }, 100);
-          } else if (action === "close-full-map") {
-            const m = document.getElementById("fullMapModal");
-            m.classList.add("hidden");
-            m.classList.remove("flex");
-          } else if (action === "toggle-map-style") {
-            toggleMapStyle();
-          } else if (action === "toggle-map-follow") {
-            mapFollowCar = !mapFollowCar;
-            const fb = document.getElementById("mapFollowBtn");
-            if (fb) fb.textContent = mapFollowCar ? "🎯 追従" : "✋ 自由";
-          } else if (action === "fit-fsw-recorder-map") {
-            if (recMap && fswNodes.length > 0) {
-              recMap.fitBounds(fswNodes.map((n) => [n.lat, n.lng]));
-            }
-          } else if (action === "start-timing") {
-            startLapTiming();
-          } else if (action === "stop-timing") {
-            stopLapTiming();
-          } else if (action === "set-sf-here") {
-            setControlLineAtCurrentPos();
-          } else if (action === "reset-sf-fsw") {
-            resetControlLineToFsw();
-            showLapToast("🏁 富士スピードウェイ標準S/Fラインへ戻しました");
-          } else if (action === "hide-lap-toast") {
-            document.getElementById("lapToastBanner").classList.add("hidden");
-          } else if (action === "generate-sample-compare") {
-            generateSampleCompareLaps();
-          } else if (action === "clear-imported-sessions") {
-            sessionRepository = [...lapSession.recordedLaps];
-            selectedRefLapId = null;
-            selectedCmpLapId = null;
-            refreshAnalyzerSelectors();
-            showLapToast("読込データを整理しました");
-          } else if (action === "focus-corner") {
-            const cid = btn.getAttribute("data-corner");
-            focusedCornerId = (focusedCornerId === cid) ? null : cid;
-            renderAnalyzerComparison();
-          } else if (action === "reset-corner-focus") {
-            focusedCornerId = null;
-            renderAnalyzerComparison();
-          } else if (action === "set-subchart") {
-            activeSubChartMode = btn.getAttribute("data-mode");
-            document.querySelectorAll(".subchart-btn").forEach((b) => {
-              b.className = b.getAttribute("data-mode") === activeSubChartMode
-                ? "subchart-btn px-2 py-1 rounded-lg bg-sky-900/80 text-sky-200 border border-sky-500/60 text-[11px] font-bold"
-                : "subchart-btn px-2 py-1 rounded-lg bg-slate-800 text-slate-300 border border-slate-700 text-[11px] font-bold";
-            });
-            renderAnalyzerComparison();
-          } else if (action === "export-session-json") {
-            exportFileDownload(JSON.stringify(sessionRepository, null, 2), `telemetry_laps_${Date.now()}.json`, "application/json");
-          } else if (action === "export-session-csv") {
-            const target = sessionRepository.find((s) => s.id === selectedCmpLapId) || sessionRepository[0];
-            if (!target) { showLapToast("出力するラップデータがありません"); return; }
-            const rows = ["tMs,distM,lat,lng,spd,rpm,gear,ped,brk,gx,gy"].concat(
-              target.samples.map((s) => `${s.tMs.toFixed(0)},${s.distM.toFixed(1)},${s.lat},${s.lng},${s.spd},${s.rpm},${s.gear},${s.ped.toFixed(0)},${s.brk.toFixed(0)},${s.gx.toFixed(2)},${s.gy.toFixed(2)}`)
-            );
-            exportFileDownload(rows.join("\n"), `lap_${target.lapNumber}_${Date.now()}.csv`, "text/csv");
-          } else if (action === "export-logs-txt") {
-            exportFileDownload(debugStore.consoleLines.map((l) => `[${l.ts}] [${l.tag}] ${l.text}`).join("\n"), `system_logs_${Date.now()}.txt`, "text/plain");
-          } else if (action === "copy-gemini-report") {
-            copyGeminiReport();
-          } else if (action === "export-debug-json") {
-            exportFullDebugJson();
-          } else if (action === "clear-debug-logs") {
-            resetDebugLogs();
-          } else if (action === "close-dbg-feedback") {
-            document.getElementById("dbgFeedbackBox").classList.add("hidden");
-          } else if (action === "set-sig-filter") {
-            signalFilterMode = btn.getAttribute("data-filter");
-            document.querySelectorAll(".dbg-filter-btn").forEach((b) => {
-              b.classList.toggle("active", b.getAttribute("data-filter") === signalFilterMode);
-            });
-            renderSignalMatrix();
-          } else if (action === "toggle-console-pause") {
-            consolePaused = !consolePaused;
-            const pb = document.getElementById("dbgPauseBtn");
-            if (pb) pb.textContent = consolePaused ? "▶ 再開" : "⏸ 一時停止";
-          } else if (action === "toggle-console-raw") {
-            consoleShowRawJson = !consoleShowRawJson;
-            const rb = document.getElementById("dbgRawToggleBtn");
-            if (rb) rb.textContent = consoleShowRawJson ? "生JSON表示: ON" : "生JSON表示: OFF";
-          } else if (action === "send-custom-cmd") {
-            const inp = document.getElementById("dbgCustomCmdInput");
-            if (!inp) return;
-            const val = inp.value.trim();
-            if (!val) return;
-            if (val === "ping") {
+        const hzBadge = document.getElementById("topHzBadge");
+        const monHz = document.getElementById("monHz");
+        const monElapsed = document.getElementById("monElapsed");
+        const dot = document.getElementById("monitorBtnDot");
+        const srcBadge = document.getElementById("sourceBadge");
+        const monR4 = document.getElementById("monArduinoStatus");
+        const monCan = document.getElementById("monCanStatus");
+        const monRssi = document.getElementById("monRssi");
+        const monUp = document.getElementById("monUptime");
+        const monMod = document.getElementById("monModel");
+        const r4DummyBtn = document.getElementById("topR4DummyBtn");
+        const r4DummyTxt = document.getElementById("topR4DummyText");
+
+        if (hzBadge) hzBadge.textContent = `${hz}Hz`;
+        if (monHz) monHz.textContent = `${hz} Hz`;
+        if (monElapsed) {
+          monElapsed.textContent = lastArduinoRxTime > 0 ? `${((now - lastArduinoRxTime) / 1000).toFixed(1)}s` : "未受信";
+        }
+        if (monRssi && latestRssi !== null) monRssi.textContent = `${latestRssi} dBm`;
+        if (monUp) {
+          const h = String(Math.floor(latestUptime / 3600)).padStart(2, "0");
+          const m = String(Math.floor((latestUptime % 3600) / 60)).padStart(2, "0");
+          const s = String(latestUptime % 60).padStart(2, "0");
+          monUp.textContent = `${h}:${m}:${s}`;
+        }
+        if (monMod) monMod.textContent = arduinoSyncedModel || "UNSYNCED";
+
+        if (dot) {
+          dot.className = isOnline
+            ? "w-2 h-2 rounded-full bg-emerald-400 pointer-events-none"
+            : "w-2 h-2 rounded-full bg-amber-400 pointer-events-none";
+        }
+        if (monR4) {
+          monR4.textContent = isOnline ? "ONLINE" : "OFFLINE / WAIT";
+          monR4.className = isOnline ? "font-extrabold text-emerald-400 mt-1" : "font-extrabold text-rose-400 mt-1";
+        }
+
+        if (r4DummyBtn && r4DummyTxt) {
+          if (isOnline && arduinoSimActive) {
+            r4DummyBtn.className = "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold bg-cyan-950 text-cyan-200 border border-cyan-500 active:scale-95 transition";
+            r4DummyTxt.textContent = "R4ダミー受信中";
+          } else {
+            r4DummyBtn.className = "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-700 active:scale-95 transition";
+            r4DummyTxt.textContent = "R4ダミー検証";
+          }
+        }
+
+        if (srcBadge) {
+          if (localDemoTimer) {
+            srcBadge.textContent = "LOCAL DEMO";
+            srcBadge.className = "mono text-[10px] sm:text-xs font-extrabold px-2.5 py-1.5 rounded-lg bg-indigo-950 text-indigo-300 border border-indigo-600/70";
+          } else if (isOnline && arduinoSimActive) {
+            srcBadge.textContent = "ARDUINO SIM";
+            srcBadge.className = "mono text-[10px] sm:text-xs font-extrabold px-2.5 py-1.5 rounded-lg bg-cyan-950 text-cyan-300 border border-cyan-600/70";
+            if (monCan) monCan.textContent = "ARDUINO SIM";
+          } else if (isOnline && arduinoCanOk) {
+            srcBadge.textContent = "REAL ECU LIVE";
+            srcBadge.className = "mono text-[10px] sm:text-xs font-extrabold px-2.5 py-1.5 rounded-lg bg-emerald-950 text-emerald-300 border border-emerald-500/70";
+            if (monCan) monCan.textContent = "REAL ECU LIVE";
+          } else if (isOnline) {
+            srcBadge.textContent = arduinoGpsFix ? "REAL GPS ONLY" : "REAL STANDBY";
+            srcBadge.className = "mono text-[10px] sm:text-xs font-extrabold px-2.5 py-1.5 rounded-lg bg-amber-950 text-amber-300 border border-amber-600/70";
+            if (monCan) monCan.textContent = "GPS / STANDBY";
+          } else {
+            srcBadge.textContent = "STANDBY";
+            srcBadge.className = "mono text-[10px] sm:text-xs font-extrabold px-2.5 py-1.5 rounded-lg bg-slate-800 text-slate-300 border border-slate-700";
+          }
+        }
+
+        updateDebugBoardState();
+      }
+
+      // ================= 13. 画面切替 & イベントハンドラ =================
+      function switchMainView(mode) {
+        activeViewMode = mode;
+        const liveEl = document.getElementById("liveMonitorView");
+        const dbgEl = document.getElementById("debugConsoleView");
+        const lapEl = document.getElementById("lapAnalyzerView");
+
+        if (liveEl) liveEl.classList.toggle("view-hidden", mode !== "live");
+        if (dbgEl) dbgEl.classList.toggle("view-hidden", mode !== "debug");
+        if (lapEl) lapEl.classList.toggle("view-hidden", mode !== "lap");
+
+        if (mode === "debug") {
+          renderSignalMatrix();
+          updateDebugBoardState();
+        } else if (mode === "lap") {
+          setTimeout(() => {
+            if (recMap) recMap.invalidateSize();
+            if (anMap) anMap.invalidateSize();
+          }, 120);
+        } else {
+          setTimeout(() => {
+            if (miniMap) miniMap.invalidateSize();
+          }, 120);
+        }
+      }
+
+      function switchLapTab(tab) {
+        activeLapTab = tab;
+        const recTab = document.getElementById("lapRecorderTab");
+        const anTab = document.getElementById("lapAnalyzerTab");
+        const btnRec = document.getElementById("tabBtnRecorder");
+        const btnAn = document.getElementById("tabBtnAnalyzer");
+        if (recTab) recTab.classList.toggle("hidden", tab !== "recorder");
+        if (anTab) anTab.classList.toggle("hidden", tab !== "analyzer");
+        if (btnRec) btnRec.classList.toggle("active", tab === "recorder");
+        if (btnAn) btnAn.classList.toggle("active", tab === "analyzer");
+
+        if (tab === "analyzer") {
+          renderAnalyzerComparison();
+          setTimeout(() => { if (anMap) anMap.invalidateSize(); }, 100);
+        } else {
+          setTimeout(() => { if (recMap) recMap.invalidateSize(); }, 100);
+        }
+      }
+
+      function openDrawer() {
+        document.getElementById("drawerBackdrop")?.classList.remove("hidden");
+        document.getElementById("vehicleDrawer")?.classList.remove("-translate-x-full");
+      }
+
+      function closeDrawer() {
+        document.getElementById("drawerBackdrop")?.classList.add("hidden");
+        document.getElementById("vehicleDrawer")?.classList.add("-translate-x-full");
+      }
+
+      function bindEvents() {
+        document.addEventListener("click", (e) => {
+          const target = e.target.closest("[data-action]");
+          if (!target) return;
+          const action = target.dataset.action;
+
+          switch (action) {
+            case "open-drawer":
+              openDrawer();
+              break;
+            case "close-drawer":
+              closeDrawer();
+              break;
+            case "select-vehicle":
+              selectVehicleModel(target.dataset.model, true);
+              closeDrawer();
+              break;
+            case "toggle-debug-view":
+              switchMainView(activeViewMode === "debug" ? "live" : "debug");
+              break;
+            case "open-debug-mode-from-drawer":
+              closeDrawer();
+              switchMainView("debug");
+              break;
+            case "toggle-lap-view":
+              switchMainView(activeViewMode === "lap" ? "live" : "lap");
+              break;
+            case "open-lap-mode-from-drawer":
+              closeDrawer();
+              switchMainView("lap");
+              break;
+            case "return-live-view":
+              switchMainView("live");
+              break;
+            case "toggle-r4-dummy":
+              publishMqttCommand({ set_sim: arduinoSimActive ? "0" : "1" });
+              break;
+            case "set-r4-sim-off":
+              if (localDemoTimer) stopLocalDemo();
+              trackPoints = [];
+              if (miniPoly) miniPoly.setLatLngs([]);
+              publishMqttCommand({ set_sim: "0" });
+              break;
+            case "set-r4-sim-on":
+              publishMqttCommand({ set_sim: "1" });
+              break;
+            case "send-uds-scan":
+              publishMqttCommand({ cmd: "uds_scan" });
+              break;
+            case "send-ping":
               pendingPingTs = Date.now();
-              publishMqttCommand({ ping: 1 });
-            } else if (val.startsWith("{")) {
-              publishMqttCommand(val);
-            } else {
-              publishMqttCommand({ cmd: val });
+              publishMqttCommand({ cmd: "ping" });
+              break;
+            case "send-custom-cmd": {
+              const inp = document.getElementById("dbgCustomCmdInput");
+              if (inp && inp.value.trim()) {
+                publishMqttCommand({ cmd: inp.value.trim() });
+                inp.value = "";
+              }
+              break;
             }
-            inp.value = "";
+            case "toggle-local-demo":
+              toggleLocalDemo();
+              break;
+            case "cycle-demo-speed":
+              demoSpeedMult = demoSpeedMult === 1 ? 2 : demoSpeedMult === 2 ? 4 : 1;
+              target.textContent = `${demoSpeedMult}x`;
+              break;
+            case "reset-peaks":
+              peakSpeed = 0;
+              maxTotalG = 0;
+              document.getElementById("peakSpeedLbl").textContent = "PEAK: 0 km/h";
+              document.getElementById("maxGLbl").textContent = "MAX: 0.00G";
+              appendLog("ピーク値をリセットしました");
+              break;
+            case "open-monitor-modal": {
+              const m = document.getElementById("monitorModal");
+              if (m) { m.classList.remove("hidden"); m.classList.add("flex"); }
+              break;
+            }
+            case "close-monitor-modal": {
+              const m = document.getElementById("monitorModal");
+              if (m) { m.classList.add("hidden"); m.classList.remove("flex"); }
+              break;
+            }
+            case "open-qr-modal": {
+              const m = document.getElementById("qrModal");
+              if (m) { m.classList.remove("hidden"); m.classList.add("flex"); }
+              break;
+            }
+            case "close-qr-modal": {
+              const m = document.getElementById("qrModal");
+              if (m) { m.classList.add("hidden"); m.classList.remove("flex"); }
+              break;
+            }
+            case "open-full-map": {
+              const m = document.getElementById("fullMapModal");
+              if (m) { m.classList.remove("hidden"); m.classList.add("flex"); ensureFullMapInit(); }
+              break;
+            }
+            case "close-full-map": {
+              const m = document.getElementById("fullMapModal");
+              if (m) { m.classList.add("hidden"); m.classList.remove("flex"); }
+              break;
+            }
+            case "toggle-map-style":
+              mapStyleMode = mapStyleMode === "satellite" ? "dark" : "satellite";
+              updateMapTiles();
+              break;
+            case "toggle-map-follow":
+              mapFollowCar = !mapFollowCar;
+              target.textContent = mapFollowCar ? "🎯 追従" : "🔓 自由";
+              break;
+            case "fit-fsw-recorder-map":
+              if (recMap) recMap.setView([35.3705, 138.9280], 15);
+              break;
+            case "set-sig-filter":
+              signalFilterMode = target.dataset.filter || "all";
+              document.querySelectorAll(".dbg-filter-btn").forEach((b) => {
+                b.classList.toggle("active", b.dataset.filter === signalFilterMode);
+              });
+              renderSignalMatrix();
+              break;
+            case "toggle-console-pause":
+              consolePaused = !consolePaused;
+              target.textContent = consolePaused ? "▶ 再開" : "⏸ 一時停止";
+              break;
+            case "toggle-console-raw":
+              consoleShowRawJson = !consoleShowRawJson;
+              target.textContent = `生JSON表示: ${consoleShowRawJson ? "ON" : "OFF"}`;
+              break;
+            case "clear-debug-logs":
+              resetDebugLogs();
+              break;
+            case "copy-gemini-report":
+              copyGeminiReport();
+              break;
+            case "close-dbg-feedback":
+              document.getElementById("dbgFeedbackBox")?.classList.add("hidden");
+              break;
+            case "export-debug-json":
+              exportDebugJson();
+              break;
+            case "switch-lap-tab":
+              switchLapTab(target.dataset.tab);
+              break;
+            case "start-timing":
+              startTimingSession();
+              break;
+            case "stop-timing":
+              stopTimingSession();
+              break;
+            case "set-sf-here":
+              setControlLineAtCurrentPos();
+              break;
+            case "reset-sf-fsw":
+              resetControlLineToFsw();
+              if (recSfLine && controlLine) recSfLine.setLatLngs([controlLine.pA, controlLine.pB]);
+              showLapToast("S/FラインをFSW標準ホームストレートへ戻しました");
+              break;
+            case "hide-lap-toast":
+              document.getElementById("lapToastBanner")?.classList.add("hidden");
+              break;
+            case "generate-sample-compare": {
+              const s1 = buildSyntheticFswSession(`FSW_A_${Date.now()}`, "FSW ベスト走行 (Ref)", 105.840, 1.0);
+              const s2 = buildSyntheticFswSession(`FSW_B_${Date.now()}`, "FSW 比較走行 (Target)", 107.620, 0.975);
+              sessionsRepo.unshift(s2);
+              sessionsRepo.unshift(s1);
+              refreshAnalyzerSelectors();
+              showLapToast("FSW比較サンプルデータを生成しました");
+              break;
+            }
+            case "clear-imported-sessions":
+              initDefaultRepoSession();
+              showLapToast("セッションリストを初期状態に整理しました");
+              break;
+            case "export-session-json":
+              downloadTextFile(`fsw_sessions_${Date.now()}.json`, JSON.stringify(sessionsRepo, null, 2), "application/json");
+              break;
+            case "export-session-csv": {
+              const refObj = getSelectedLapObj("selectRefLap");
+              if (refObj) {
+                const csv = ["distM,timeSec,spd,rpm,gx,lat,lng"]
+                  .concat(refObj.lap.points.map((p) => `${p.distM.toFixed(1)},${p.timeSec.toFixed(3)},${p.spd},${p.rpm},${p.gx.toFixed(2)},${p.lat},${p.lng}`))
+                  .join("\n");
+                downloadTextFile(`fsw_lap_${Date.now()}.csv`, csv, "text/csv");
+              }
+              break;
+            }
+            case "export-logs-txt":
+              downloadTextFile(`telemetry_log_${Date.now()}.txt`, debugStore.consoleLines.join("\n"), "text/plain");
+              break;
+            case "set-subchart":
+              activeSubChartMode = target.dataset.mode || "rpm";
+              renderAnalyzerComparison();
+              break;
+            case "reset-corner-focus":
+              focusedCornerId = null;
+              renderAnalyzerComparison();
+              break;
           }
         });
 
-        const cmdInp = document.getElementById("dbgCustomCmdInput");
-        if (cmdInp) {
-          cmdInp.addEventListener("keydown", (e) => {
-            if (e.key === "Enter") {
-              const sendBtn = document.querySelector('[data-action="send-custom-cmd"]');
-              if (sendBtn) sendBtn.click();
+        document.getElementById("dbgCustomCmdInput")?.addEventListener("keydown", (e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            const val = e.target.value.trim();
+            if (val) {
+              publishMqttCommand({ cmd: val });
+              e.target.value = "";
             }
-          });
-        }
+          }
+        });
 
-        const qrInp = document.getElementById("qrUrlInput");
-        if (qrInp) {
-          qrInp.addEventListener("input", () => {
-            renderQrCodes(qrInp.value.trim() || DEFAULT_SHARE_URL);
-          });
-        }
+        document.getElementById("qrUrlInput")?.addEventListener("input", (e) => {
+          const val = e.target.value.trim();
+          if (val) renderQrCodes(val);
+        });
 
-        const selRef = document.getElementById("selectRefLap");
-        const selCmp = document.getElementById("selectCmpLap");
-        if (selRef) {
-          selRef.addEventListener("change", () => {
-            selectedRefLapId = selRef.value;
-            renderAnalyzerComparison();
-          });
-        }
-        if (selCmp) {
-          selCmp.addEventListener("change", () => {
-            selectedCmpLapId = selCmp.value;
-            renderAnalyzerComparison();
-          });
-        }
+        document.getElementById("selectRefLap")?.addEventListener("change", renderAnalyzerComparison);
+        document.getElementById("selectCmpLap")?.addEventListener("change", renderAnalyzerComparison);
 
-        const importInp = document.getElementById("importSessionInput");
-        if (importInp) {
-          importInp.addEventListener("change", async (e) => {
-            const files = Array.from(e.target.files || []);
-            let loaded = 0;
-            for (const f of files) {
+        document.getElementById("importSessionInput")?.addEventListener("change", (e) => {
+          const files = Array.from(e.target.files || []);
+          files.forEach((file) => {
+            const reader = new FileReader();
+            reader.onload = (ev) => {
               try {
-                const txt = await f.text();
-                const parsed = JSON.parse(txt);
-                const list = Array.isArray(parsed) ? parsed : (parsed.laps || [parsed]);
-                list.forEach((item) => {
-                  if (item && Array.isArray(item.samples) && item.samples.length > 0) {
-                    item.id = item.id || `imp-${Date.now()}-${Math.random().toString(16).slice(2, 6)}`;
-                    sessionRepository.push(item);
-                    loaded++;
-                  }
-                });
-              } catch (err) {}
-            }
-            if (loaded > 0) {
-              switchLapSubTab("analyzer");
-              showLapToast(`📂 ${loaded} 件の過去ラップデータを読み込みました`);
-            }
-            importInp.value = "";
+                const parsed = JSON.parse(ev.target.result);
+                if (Array.isArray(parsed)) {
+                  parsed.forEach((s) => { if (s && Array.isArray(s.laps)) sessionsRepo.unshift(s); });
+                } else if (parsed && Array.isArray(parsed.laps)) {
+                  sessionsRepo.unshift(parsed);
+                }
+                refreshAnalyzerSelectors();
+                showLapToast(`${file.name} を読み込みました`);
+              } catch (err) {
+                showLapToast(`${file.name} の読込に失敗しました`);
+              }
+            };
+            reader.readAsText(file);
           });
-        }
+        });
 
-        const cmpCanvas = document.getElementById("telemetryCompareCanvas");
-        if (cmpCanvas) {
-          const handleHover = (clientX) => {
-            const lapA = sessionRepository.find((s) => s.id === selectedRefLapId);
-            const lapB = sessionRepository.find((s) => s.id === selectedCmpLapId);
-            if (!lapA || !lapB) return;
-            const rect = cmpCanvas.getBoundingClientRect();
-            const padL = 44, padR = 16;
-            const ratio = Math.max(0, Math.min(1, (clientX - rect.left - padL) / Math.max(1, rect.width - padL - padR)));
-            let dStart = 0, dEnd = FSW_LENGTH_M;
-            if (focusedCornerId) {
-              const fc = FSW_CORNERS.find((c) => c.id === focusedCornerId);
-              if (fc) { dStart = Math.max(0, fc.startM - 150); dEnd = Math.min(FSW_LENGTH_M, fc.endM + 150); }
-            }
-            chartHoverDist = dStart + ratio * (dEnd - dStart);
-            const sA = sampleAtDist(lapA.samples, chartHoverDist);
-            const sB = sampleAtDist(lapB.samples, chartHoverDist);
-            const readout = document.getElementById("chartCursorReadout");
-            if (readout && sA && sB) {
-              readout.innerHTML = `<span>DIST: <strong class="text-white">${Math.round(chartHoverDist)}m</strong></span><span>REF(A): <strong class="text-emerald-300">${Math.round(sA.spd)}km/h</strong></span><span>TARGET(B): <strong class="text-sky-300">${Math.round(sB.spd)}km/h</strong></span>`;
-            }
-            drawOverlayTelemetryChart(lapA, lapB);
-          };
-          cmpCanvas.addEventListener("mousemove", (e) => handleHover(e.clientX));
-          cmpCanvas.addEventListener("touchmove", (e) => {
-            if (e.touches && e.touches[0]) handleHover(e.touches[0].clientX);
-          }, { passive: true });
-        }
+        window.addEventListener("resize", () => {
+          if (smoothLastD) updateDashboardUI(smoothLastD);
+          if (activeViewMode === "lap" && activeLapTab === "analyzer") renderAnalyzerComparison();
+        });
       }
 
-      // ================= 16. アプリケーション初期化 =================
+      // ================= 14. アプリケーション起動初期化 =================
       function initApp() {
+        let savedVeh = "GRECALE";
+        try {
+          const v = localStorage.getItem("maserati_selected_vehicle");
+          if (v && VEHICLE_PROFILES[v]) savedVeh = v;
+        } catch (e) {}
+
         buildShiftLights();
         buildFswTrack();
         buildDrawerVehicleButtons();
-        selectVehicleModel("GRECALE", false);
+        selectVehicleModel(savedVeh, false);
+        restoreDebugStateFromLocalStorage();
+        updateSignalCountsUI();
+        renderSignalMatrix();
         drawGForceBall(0, 0);
+        drawChassisDiagram(0, 0, 0);
         initMaps();
+        initDefaultRepoSession();
 
         const initialUrl = (window.location.protocol.startsWith("http") && window.location.hostname)
           ? window.location.href
           : DEFAULT_SHARE_URL;
-        const qrInp = document.getElementById("qrUrlInput");
-        if (qrInp) qrInp.value = initialUrl;
+        const qrInput = document.getElementById("qrUrlInput");
+        if (qrInput) qrInput.value = initialUrl;
         renderQrCodes(initialUrl);
 
-        loadSavedDebugFromStorage();
-        updateSignalCountsUI();
-        renderSignalMatrix();
-        setupEventListeners();
-        connectMqttCloud();
+        bindEvents();
+        connectMqtt();
+
+        setInterval(updateStatusIndicators, 500);
+        setInterval(saveDebugStateToLocalStorage, 4000);
         requestAnimationFrame(renderSmoothGaugesLoop);
 
-        setInterval(updateConnectionHealthUI, 500);
-        setInterval(() => {
-          if (totalPackets > 0) saveDebugStateToStorage();
-        }, 4000);
+        appendLog("ダッシュボード初期化完了（全ボタン・60fpsメーター・自動車種同期有効）");
       }
 
       if (document.readyState === "loading") {
