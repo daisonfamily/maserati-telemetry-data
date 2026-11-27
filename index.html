@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Circuit Live Telemetry &amp; OBD/UDS Debug Monitor</title>
+  <title>Circuit &amp; Road Live Telemetry Monitor</title>
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- Google Fonts: Inter & JetBrains Mono -->
@@ -40,11 +40,6 @@
     }
     .corner-card { transition: border-color 0.15s ease, transform 0.15s ease; }
     .corner-card:hover { border-color: rgba(56, 189, 248, 0.7); transform: translateY(-1px); }
-    .corner-card.selected {
-      border-color: #38bdf8;
-      background: rgba(14, 116, 144, 0.2);
-      box-shadow: 0 0 16px rgba(56, 189, 248, 0.25);
-    }
     .tyre-visual-pill {
       position: relative;
       width: 26px;
@@ -100,7 +95,7 @@
     <div class="max-w-[1600px] mx-auto flex flex-wrap items-center justify-between gap-2">
       <!-- 左側：車種メニュー＆アクティブ車両表示 -->
       <div class="flex items-center gap-2.5">
-        <button type="button" data-action="open-drawer" class="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 text-xs sm:text-sm font-bold text-white flex items-center gap-1.5 active:scale-95 transition">
+        <button type="button" data-action="open-drawer" class="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 text-xs sm:text-sm font-bold text-white flex items-center gap-1.5 active:scale-95 transition cursor-pointer">
           <span class="pointer-events-none">☰</span>
           <span class="hidden sm:inline pointer-events-none">車種選択</span>
         </button>
@@ -116,30 +111,35 @@
         </div>
       </div>
 
-      <!-- 右側：デバッグ画面・ラップ計測遷移・スマホQR・R4ダミー検証・Arduino監視・通信ステータス -->
+      <!-- 右側：公道ログ・デバッグ画面・ラップ計測・スマホQR・R4ダミー検証・Arduino監視・通信ステータス -->
       <div class="flex flex-wrap items-center gap-1.5 sm:gap-2">
-        <button type="button" id="topDebugModeBtn" data-action="toggle-debug-view" class="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-extrabold bg-amber-950/90 hover:bg-amber-900 text-amber-200 border border-amber-500/70 active:scale-95 transition shadow-md">
+        <button type="button" id="topRoadLogBtn" data-action="toggle-road-view" class="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-extrabold bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-500 hover:to-teal-600 text-white border border-emerald-400/60 active:scale-95 transition shadow-md cursor-pointer">
+          <span id="topRoadRecDot" class="w-2 h-2 rounded-full bg-white/80 pointer-events-none"></span>
+          <span id="topRoadModeText" class="pointer-events-none">🛣️ 公道ログ</span>
+        </button>
+
+        <button type="button" id="topDebugModeBtn" data-action="toggle-debug-view" class="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-extrabold bg-amber-950/90 hover:bg-amber-900 text-amber-200 border border-amber-500/70 active:scale-95 transition shadow-md cursor-pointer">
           <span class="pointer-events-none">🛠️</span>
           <span id="topDebugModeText" class="pointer-events-none">デバッグ</span>
           <span id="topSignalHealthBadge" class="mono text-[10px] px-1.5 py-0.5 rounded bg-black/60 text-emerald-300 pointer-events-none">0/22</span>
         </button>
 
-        <button type="button" id="topLapModeBtn" data-action="toggle-lap-view" class="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-extrabold bg-gradient-to-r from-rose-600 to-rose-700 hover:from-rose-500 hover:to-rose-600 text-white border border-rose-400/60 active:scale-95 transition shadow-md">
+        <button type="button" id="topLapModeBtn" data-action="toggle-lap-view" class="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-extrabold bg-gradient-to-r from-rose-600 to-rose-700 hover:from-rose-500 hover:to-rose-600 text-white border border-rose-400/60 active:scale-95 transition shadow-md cursor-pointer">
           <span id="topLapRecDot" class="w-2 h-2 rounded-full bg-white/80 pointer-events-none"></span>
           <span id="topLapModeText" class="pointer-events-none">⏱️ ラップ計測</span>
         </button>
 
-        <button type="button" data-action="open-qr-modal" class="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 text-xs font-bold text-slate-200 active:scale-95 transition" title="スマホ観戦用QRコードを拡大表示">
+        <button type="button" data-action="open-qr-modal" class="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 text-xs font-bold text-slate-200 active:scale-95 transition cursor-pointer" title="スマホ観戦用QRコードを拡大表示">
           <div id="headerMiniQr" class="w-5 h-5 bg-white rounded-sm p-0.5 flex items-center justify-center overflow-hidden pointer-events-none"></div>
           <span class="hidden md:inline pointer-events-none">スマホQR</span>
         </button>
 
-        <button type="button" id="topR4DummyBtn" data-action="toggle-r4-dummy" class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold bg-slate-900 hover:bg-slate-800 text-cyan-300 border border-cyan-800/70 active:scale-95 transition">
+        <button type="button" id="topR4DummyBtn" data-action="toggle-r4-dummy" class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold bg-slate-900 hover:bg-slate-800 text-cyan-300 border border-cyan-800/70 active:scale-95 transition cursor-pointer">
           <span class="pointer-events-none">🧪</span>
           <span id="topR4DummyText" class="hidden sm:inline pointer-events-none">R4ダミー検証</span>
         </button>
 
-        <button type="button" id="topMonitorBtn" data-action="open-monitor-modal" class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold bg-slate-900 hover:bg-slate-800 text-slate-200 border border-slate-700 active:scale-95 transition">
+        <button type="button" id="topMonitorBtn" data-action="open-monitor-modal" class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold bg-slate-900 hover:bg-slate-800 text-slate-200 border border-slate-700 active:scale-95 transition cursor-pointer">
           <span id="monitorBtnDot" class="w-2 h-2 rounded-full bg-amber-400 pointer-events-none"></span>
           <span class="hidden sm:inline pointer-events-none">📡 監視</span>
           <span id="topHzBadge" class="mono text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 pointer-events-none">0.0Hz</span>
@@ -159,14 +159,18 @@
         <p class="text-[10px] font-bold text-rose-500 tracking-widest uppercase">VEHICLE PROFILE &amp; CONTROL</p>
         <h2 class="text-base font-black text-white">車種プロファイル選択</h2>
       </div>
-      <button type="button" data-action="close-drawer" class="w-8 h-8 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-300 font-bold">✕</button>
+      <button type="button" data-action="close-drawer" class="w-8 h-8 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-300 font-bold cursor-pointer">✕</button>
     </div>
 
     <div class="flex-1 overflow-y-auto p-3.5 space-y-3">
       <div id="vehicleProfileList" class="space-y-2"></div>
 
       <div class="pt-3 border-t border-slate-800 space-y-2.5">
-        <button type="button" data-action="open-debug-mode-from-drawer" class="w-full py-2.5 px-3 rounded-xl bg-amber-950/90 hover:bg-amber-900/90 border border-amber-600/70 text-xs font-bold text-amber-200">
+        <button type="button" data-action="open-road-mode-from-drawer" class="w-full py-2.5 px-3 rounded-xl bg-emerald-950/90 hover:bg-emerald-900/90 border border-emerald-600/70 text-xs font-bold text-emerald-200 cursor-pointer">
+          🛣️ 公道ドライブ・長時間ロガーへ
+        </button>
+
+        <button type="button" data-action="open-debug-mode-from-drawer" class="w-full py-2.5 px-3 rounded-xl bg-amber-950/90 hover:bg-amber-900/90 border border-amber-600/70 text-xs font-bold text-amber-200 cursor-pointer">
           🛠️ 実車デバッグ・全OBD信号診断画面へ
         </button>
 
@@ -175,16 +179,16 @@
             <p class="text-xs font-bold text-white">富士スピードウェイ デモ走行</p>
             <p class="text-[11px] text-slate-400">FSW本コース(4,563m)GPSデモ</p>
           </div>
-          <button type="button" id="demoToggleBtn" data-action="toggle-local-demo" class="px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-800 text-slate-300 border border-slate-700">OFF</button>
+          <button type="button" id="demoToggleBtn" data-action="toggle-local-demo" class="px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-800 text-slate-300 border border-slate-700 cursor-pointer">OFF</button>
         </div>
 
-        <button type="button" data-action="open-lap-mode-from-drawer" class="w-full py-2.5 px-3 rounded-xl bg-rose-950/80 hover:bg-rose-900/80 border border-rose-700/70 text-xs font-bold text-rose-200">
-          ⏱️ ラップ計測・複数データ比較分析へ
+        <button type="button" data-action="open-lap-mode-from-drawer" class="w-full py-2.5 px-3 rounded-xl bg-rose-950/80 hover:bg-rose-900/80 border border-rose-700/70 text-xs font-bold text-rose-200 cursor-pointer">
+          ⏱️ サーキットラップ計測・比較分析へ
         </button>
 
         <div class="grid grid-cols-2 gap-2">
-          <button type="button" data-action="send-uds-scan" class="py-2 px-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-xs font-bold text-sky-300">🔍 実車UDSスキャン</button>
-          <button type="button" data-action="reset-peaks" class="py-2 px-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-xs font-bold text-slate-300">↺ ピークリセット</button>
+          <button type="button" data-action="send-uds-scan" class="py-2 px-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-xs font-bold text-sky-300 cursor-pointer">🔍 実車UDSスキャン</button>
+          <button type="button" data-action="reset-peaks" class="py-2 px-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-xs font-bold text-slate-300 cursor-pointer">↺ ピークリセット</button>
         </div>
       </div>
 
@@ -448,9 +452,9 @@
             <p id="gpsCoordLbl" class="mono text-[11px] text-slate-300 mt-0.5">35.371700, 138.926700</p>
           </div>
           <div class="flex items-center gap-1">
-            <button type="button" data-action="toggle-map-style" class="map-style-btn px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-[11px] font-bold text-cyan-300 border border-slate-700">🛰️ 航空</button>
-            <button type="button" id="mapFollowBtn" data-action="toggle-map-follow" class="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-[11px] font-bold text-emerald-300 border border-slate-700">🎯 追従</button>
-            <button type="button" data-action="open-full-map" class="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-[11px] font-bold text-white border border-slate-700" title="大画面マップを開く">⤢</button>
+            <button type="button" data-action="toggle-map-style" class="map-style-btn px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-[11px] font-bold text-cyan-300 border border-slate-700 cursor-pointer">🛰️ 航空</button>
+            <button type="button" id="mapFollowBtn" data-action="toggle-map-follow" class="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-[11px] font-bold text-emerald-300 border border-slate-700 cursor-pointer">🎯 追従</button>
+            <button type="button" data-action="open-full-map" class="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-[11px] font-bold text-white border border-slate-700 cursor-pointer" title="大画面マップを開く">⤢</button>
           </div>
         </div>
         <div class="relative w-full h-[250px] lg:flex-1 rounded-xl overflow-hidden border border-slate-800 bg-slate-950">
@@ -460,12 +464,160 @@
     </section>
   </main>
 
+  <!-- ==================== 3.2 新設専用ページ：公道ドライブ・長時間テレメトリーロガー ==================== -->
+  <section id="roadLoggerView" class="view-hidden flex-1 max-w-[1600px] w-full mx-auto p-3 sm:p-5 flex flex-col gap-4">
+    <!-- 上部ヘッダー＆記録コントロールバー -->
+    <div class="panel rounded-2xl p-3.5 sm:p-4 flex flex-col gap-3">
+      <div class="flex flex-wrap items-center justify-between gap-2.5">
+        <div class="flex items-center gap-2.5">
+          <button type="button" data-action="return-live-view" class="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-600 text-xs sm:text-sm font-bold text-white transition active:scale-95 cursor-pointer">
+            ← ライブモニターへ
+          </button>
+          <div>
+            <div class="flex items-center gap-2">
+              <p class="text-[10px] font-bold tracking-widest text-emerald-400 uppercase">PUBLIC ROAD POINT-TO-POINT TELEMETRY LOGGER</p>
+              <span id="roadDbBadge" class="mono text-[10px] font-bold px-2 py-0.5 rounded bg-slate-900 text-cyan-300 border border-slate-700">DB STANDBY</span>
+            </div>
+            <h2 class="text-sm sm:text-base font-black text-white">公道ドライブ・長時間連続データロガー（S/Fライン不要・最大3.5時間連続対応）</h2>
+          </div>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-1.5 sm:gap-2">
+          <button type="button" id="btnRoadStart" data-action="road-start" class="py-2 px-4 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 text-white font-black text-xs sm:text-sm shadow-lg active:scale-95 transition cursor-pointer">
+            ▶ 走行ログ記録スタート
+          </button>
+          <button type="button" id="btnRoadStop" data-action="road-stop" disabled class="py-2 px-4 rounded-xl bg-slate-800 text-slate-500 border border-slate-700 font-black text-xs sm:text-sm transition disabled:opacity-50 cursor-pointer">
+            ⏹ 記録完了・保存
+          </button>
+          <button type="button" id="btnRoadMark" data-action="road-add-marker" disabled class="py-2 px-3 rounded-xl bg-amber-950/90 hover:bg-amber-900 border border-amber-500/70 text-amber-200 font-extrabold text-xs transition disabled:opacity-40 cursor-pointer">
+            📍 地点マーク
+          </button>
+        </div>
+      </div>
+
+      <!-- リアルタイム走行統計メトリクス（8カード） -->
+      <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2 mono text-xs">
+        <div class="p-2.5 rounded-xl bg-slate-950 border border-slate-800">
+          <span class="text-[10px] text-slate-500 font-sans block">ステータス</span>
+          <strong id="roadStatStatus" class="text-xs sm:text-sm text-slate-300">STANDBY</strong>
+        </div>
+        <div class="p-2.5 rounded-xl bg-slate-950 border border-slate-800">
+          <span class="text-[10px] text-slate-500 font-sans block">経過時間</span>
+          <strong id="roadStatDuration" class="text-sm text-white">00:00:00</strong>
+        </div>
+        <div class="p-2.5 rounded-xl bg-slate-950 border border-slate-800">
+          <span class="text-[10px] text-slate-500 font-sans block">総走行距離</span>
+          <strong id="roadStatDist" class="text-sm text-emerald-300">0.00 km</strong>
+        </div>
+        <div class="p-2.5 rounded-xl bg-slate-950 border border-slate-800">
+          <span class="text-[10px] text-slate-500 font-sans block">記録サンプル数</span>
+          <strong id="roadStatSamples" class="text-sm text-cyan-300">0 pts</strong>
+        </div>
+        <div class="p-2.5 rounded-xl bg-slate-950 border border-slate-800">
+          <span class="text-[10px] text-slate-500 font-sans block">最高車速 / 平均</span>
+          <strong id="roadStatSpeed" class="text-xs sm:text-sm text-amber-300">0 / 0 km/h</strong>
+        </div>
+        <div class="p-2.5 rounded-xl bg-slate-950 border border-slate-800">
+          <span class="text-[10px] text-slate-500 font-sans block">最高回転数</span>
+          <strong id="roadStatMaxRpm" class="text-sm text-rose-300">0 rpm</strong>
+        </div>
+        <div class="p-2.5 rounded-xl bg-slate-950 border border-slate-800">
+          <span class="text-[10px] text-slate-500 font-sans block">最大ブースト</span>
+          <strong id="roadStatMaxBoost" class="text-sm text-sky-300">0.00 bar</strong>
+        </div>
+        <div class="p-2.5 rounded-xl bg-slate-950 border border-slate-800">
+          <span class="text-[10px] text-slate-500 font-sans block">最高油温 / 水温</span>
+          <strong id="roadStatMaxTemp" class="text-xs sm:text-sm text-orange-300">-- / -- °C</strong>
+        </div>
+      </div>
+
+      <!-- エクスポート＆アーカイブ選択バー -->
+      <div class="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-800/80">
+        <div class="flex flex-wrap items-center gap-2 flex-1 min-w-[240px]">
+          <span class="text-[11px] font-bold text-slate-400 shrink-0">表示・出力対象:</span>
+          <select id="roadArchiveSelect" class="flex-1 max-w-md px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-700 text-xs mono text-emerald-200"></select>
+          <button type="button" data-action="road-delete-selected" class="px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-rose-950 border border-slate-700 text-[11px] font-bold text-slate-400 hover:text-rose-300 cursor-pointer">🗑 削除</button>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-1.5">
+          <button type="button" data-action="road-export-csv" class="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black shadow active:scale-95 transition cursor-pointer">
+            📊 完全CSV保存 (全28項目)
+          </button>
+          <button type="button" data-action="road-export-gpx" class="px-3 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-black shadow active:scale-95 transition cursor-pointer">
+            🗺️ GPXルート保存
+          </button>
+          <button type="button" data-action="road-export-json" class="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-black shadow active:scale-95 transition cursor-pointer">
+            💾 フルJSON保存
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div id="roadToastBanner" class="hidden px-4 py-2.5 rounded-xl bg-emerald-950/90 border border-emerald-500/60 text-emerald-100 text-xs sm:text-sm font-bold flex items-center justify-between">
+      <span id="roadToastText">Ready</span>
+      <button type="button" data-action="hide-road-toast" class="text-emerald-300 hover:text-white text-xs font-bold ml-3 cursor-pointer">✕</button>
+    </div>
+
+    <!-- メインコンテンツ：左・速度ヒートマップ衛星地図 / 右・4チャンネル時系列波形 -->
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-4">
+      <!-- 左カラム（6列）：速度ヒートマップ付き衛星ルートマップ -->
+      <div class="lg:col-span-6 panel rounded-2xl p-4 flex flex-col gap-2.5">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <p class="text-[10px] font-bold tracking-widest text-emerald-400 uppercase">SPEED HEATMAP SATELLITE ROUTE</p>
+            <h3 class="text-sm font-extrabold text-white">走行ルート軌跡（速度域カラーヒートマップ）</h3>
+          </div>
+          <div class="flex items-center gap-1.5">
+            <button type="button" data-action="toggle-map-style" class="map-style-btn px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-bold text-cyan-300 border border-slate-700 cursor-pointer">🛰️ 航空</button>
+            <button type="button" id="roadFollowBtn" data-action="road-toggle-follow" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-bold text-emerald-300 border border-slate-700 cursor-pointer">🎯 追従中</button>
+            <button type="button" data-action="road-fit-bounds" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-bold text-white border border-slate-700 cursor-pointer">🗺️ 全ルート表示</button>
+          </div>
+        </div>
+
+        <!-- 速度カラー凡例 -->
+        <div class="flex items-center justify-between text-[10px] mono px-2 py-1 rounded-lg bg-slate-950 border border-slate-800 text-slate-300">
+          <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-sky-400 inline-block"></span>0-40 km/h</span>
+          <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-emerald-400 inline-block"></span>40-70 km/h</span>
+          <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-amber-400 inline-block"></span>70-100 km/h</span>
+          <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-rose-500 inline-block"></span>100+ km/h</span>
+        </div>
+
+        <div class="relative w-full h-[380px] sm:h-[460px] rounded-xl overflow-hidden border border-slate-800 bg-slate-950">
+          <div id="roadLeafletMap" class="w-full h-full z-10"></div>
+        </div>
+
+        <div id="roadMarkersSummary" class="text-[11px] mono text-slate-400 flex flex-wrap gap-1.5 min-h-[24px]">
+          <span>📍 チェックポイント: 0件（走行中に「📍 地点マーク」で記録できます）</span>
+        </div>
+      </div>
+
+      <!-- 右カラム（6列）：4チャンネル時系列テレメトリー波形＆シーク解析 -->
+      <div class="lg:col-span-6 panel rounded-2xl p-4 flex flex-col gap-2.5">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <p class="text-[10px] font-bold tracking-widest text-cyan-400 uppercase">MULTI-CHANNEL TIME-SERIES TELEMETRY</p>
+            <h3 class="text-sm font-extrabold text-white">4チャンネル時系列波形（車速 / RPM・過給 / ペダル / 油温・水温）</h3>
+          </div>
+          <span id="roadChartSpanLbl" class="mono text-[11px] text-slate-400">全区間表示</span>
+        </div>
+
+        <div id="roadCursorReadout" class="px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-[11px] mono text-cyan-200 leading-relaxed">
+          波形グラフ上をタッチ／ドラッグすると、その時刻の車両データと地図上の位置が連動します
+        </div>
+
+        <div class="relative w-full h-[430px] sm:h-[490px] rounded-xl bg-slate-950 border border-slate-800 overflow-hidden">
+          <canvas id="roadTelemetryCanvas" class="w-full h-full block cursor-crosshair"></canvas>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <!-- ==================== 3.5 スマホ対応 実車デバッグ＆OBD信号診断画面 ==================== -->
   <section id="debugConsoleView" class="view-hidden flex-1 max-w-[1600px] w-full mx-auto p-3 sm:p-5 flex flex-col gap-4">
     <div class="panel rounded-2xl p-3.5 sm:p-4 flex flex-col gap-3">
       <div class="flex flex-wrap items-center justify-between gap-2">
         <div class="flex items-center gap-2">
-          <button type="button" data-action="return-live-view" class="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-600 text-xs sm:text-sm font-bold text-white transition active:scale-95">
+          <button type="button" data-action="return-live-view" class="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-600 text-xs sm:text-sm font-bold text-white transition active:scale-95 cursor-pointer">
             ← ライブ画面へ
           </button>
           <div>
@@ -476,29 +628,28 @@
 
         <div class="flex items-center gap-1.5">
           <span id="dbgAutoSaveBadge" class="mono text-[10px] sm:text-xs font-extrabold px-2.5 py-1 rounded-lg bg-emerald-950 text-emerald-300 border border-emerald-600/70">● AUTO-SAVE: 0回</span>
-          <button type="button" data-action="clear-debug-logs" class="px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 text-xs font-bold text-slate-300 active:scale-95">🗑 リセット</button>
+          <button type="button" data-action="clear-debug-logs" class="px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 text-xs font-bold text-slate-300 active:scale-95 cursor-pointer">🗑 リセット</button>
         </div>
       </div>
 
       <div class="grid grid-cols-2 sm:grid-cols-5 gap-2">
-        <button type="button" data-action="set-r4-sim-off" class="py-2.5 px-3 rounded-xl bg-rose-950/90 hover:bg-rose-900 border border-rose-500/70 text-rose-100 text-xs font-extrabold active:scale-95 transition">🚗 実車モード (ダミーOFF)</button>
-        <button type="button" data-action="set-r4-sim-on" class="py-2.5 px-3 rounded-xl bg-cyan-950/90 hover:bg-cyan-900 border border-cyan-600/70 text-cyan-200 text-xs font-extrabold active:scale-95 transition">🧪 デモモード (ダミーON)</button>
-        <button type="button" data-action="send-uds-scan" class="py-2.5 px-3 rounded-xl bg-sky-950/90 hover:bg-sky-900 border border-sky-500/70 text-sky-200 text-xs font-extrabold active:scale-95 transition">🔍 実車UDSスキャン</button>
-        <button type="button" data-action="copy-gemini-report" class="py-2.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black shadow-lg active:scale-95 transition">📋 Gemini用レポートコピー</button>
-        <button type="button" data-action="export-debug-json" class="col-span-2 sm:col-span-1 py-2.5 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-black shadow-lg active:scale-95 transition">💾 全デバッグJSON保存</button>
+        <button type="button" data-action="set-r4-sim-off" class="py-2.5 px-3 rounded-xl bg-rose-950/90 hover:bg-rose-900 border border-rose-500/70 text-rose-100 text-xs font-extrabold active:scale-95 transition cursor-pointer">🚗 実車モード (ダミーOFF)</button>
+        <button type="button" data-action="set-r4-sim-on" class="py-2.5 px-3 rounded-xl bg-cyan-950/90 hover:bg-cyan-900 border border-cyan-600/70 text-cyan-200 text-xs font-extrabold active:scale-95 transition cursor-pointer">🧪 デモモード (ダミーON)</button>
+        <button type="button" data-action="send-uds-scan" class="py-2.5 px-3 rounded-xl bg-sky-950/90 hover:bg-sky-900 border border-sky-500/70 text-sky-200 text-xs font-extrabold active:scale-95 transition cursor-pointer">🔍 実車UDSスキャン</button>
+        <button type="button" data-action="copy-gemini-report" class="py-2.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black shadow-lg active:scale-95 transition cursor-pointer">📋 Gemini用レポートコピー</button>
+        <button type="button" data-action="export-debug-json" class="col-span-2 sm:col-span-1 py-2.5 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-black shadow-lg active:scale-95 transition cursor-pointer">💾 全デバッグJSON保存</button>
       </div>
 
       <div id="dbgFeedbackBox" class="hidden p-3 rounded-xl bg-black/85 border border-emerald-500/60 space-y-2">
         <div class="flex items-center justify-between">
           <span id="dbgFeedbackTitle" class="text-xs font-bold text-emerald-300">✓ Geminiフィードバック用レポートをコピーしました</span>
-          <button type="button" data-action="close-dbg-feedback" class="text-xs font-bold text-slate-400 hover:text-white px-2">✕ 閉じる</button>
+          <button type="button" data-action="close-dbg-feedback" class="text-xs font-bold text-slate-400 hover:text-white px-2 cursor-pointer">✕ 閉じる</button>
         </div>
         <textarea id="dbgReportTextarea" rows="5" readonly class="w-full p-2 rounded-lg bg-slate-950 border border-slate-800 text-[11px] mono text-slate-200 focus:outline-none"></textarea>
       </div>
     </div>
 
     <div class="grid grid-cols-1 lg:grid-cols-12 gap-4">
-      <!-- 左カラム（7列）：OBD経由および各センサー信号の取得可否モニタリング -->
       <div class="lg:col-span-7 panel rounded-2xl p-4 flex flex-col gap-3">
         <div class="flex flex-wrap items-center justify-between gap-2">
           <div>
@@ -506,9 +657,9 @@
             <h3 class="text-sm sm:text-base font-black text-white">全信号 取得状況モニタリング（取得OK / 固定値 / 未取得）</h3>
           </div>
           <div class="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800 text-[11px]">
-            <button type="button" data-action="set-sig-filter" data-filter="all" class="dbg-filter-btn active px-2.5 py-1 rounded-lg border border-transparent font-bold text-slate-300">全て (<span id="sigCntAll">22</span>)</button>
-            <button type="button" data-action="set-sig-filter" data-filter="ok" class="dbg-filter-btn px-2.5 py-1 rounded-lg border border-transparent font-bold text-emerald-300">OK (<span id="sigCntOk">0</span>)</button>
-            <button type="button" data-action="set-sig-filter" data-filter="ng" class="dbg-filter-btn px-2.5 py-1 rounded-lg border border-transparent font-bold text-rose-300">未取得 (<span id="sigCntNg">22</span>)</button>
+            <button type="button" data-action="set-sig-filter" data-filter="all" class="dbg-filter-btn active px-2.5 py-1 rounded-lg border border-transparent font-bold text-slate-300 cursor-pointer">全て (<span id="sigCntAll">22</span>)</button>
+            <button type="button" data-action="set-sig-filter" data-filter="ok" class="dbg-filter-btn px-2.5 py-1 rounded-lg border border-transparent font-bold text-emerald-300 cursor-pointer">OK (<span id="sigCntOk">0</span>)</button>
+            <button type="button" data-action="set-sig-filter" data-filter="ng" class="dbg-filter-btn px-2.5 py-1 rounded-lg border border-transparent font-bold text-rose-300 cursor-pointer">未取得 (<span id="sigCntNg">22</span>)</button>
           </div>
         </div>
 
@@ -530,7 +681,6 @@
         <div id="signalMatrixContainer" class="space-y-2 max-h-[560px] overflow-y-auto pr-1"></div>
       </div>
 
-      <!-- 右カラム（5列）：現在のArduino状態 ＆ リアルタイム生通信コンソール -->
       <div class="lg:col-span-5 flex flex-col gap-4">
         <div class="panel rounded-2xl p-4 space-y-3">
           <div class="flex items-center justify-between">
@@ -576,8 +726,8 @@
               <h3 class="text-sm font-black text-white">リアルタイム通信コンソール</h3>
             </div>
             <div class="flex items-center gap-1.5">
-              <button type="button" id="dbgPauseBtn" data-action="toggle-console-pause" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-600 text-[11px] font-bold text-amber-300">⏸ 一時停止</button>
-              <button type="button" id="dbgRawToggleBtn" data-action="toggle-console-raw" class="px-2.5 py-1 rounded-lg bg-sky-950 hover:bg-sky-900 border border-sky-600/70 text-[11px] font-bold text-sky-200">生JSON表示: ON</button>
+              <button type="button" id="dbgPauseBtn" data-action="toggle-console-pause" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-600 text-[11px] font-bold text-amber-300 cursor-pointer">⏸ 一時停止</button>
+              <button type="button" id="dbgRawToggleBtn" data-action="toggle-console-raw" class="px-2.5 py-1 rounded-lg bg-sky-950 hover:bg-sky-900 border border-sky-600/70 text-[11px] font-bold text-sky-200 cursor-pointer">生JSON表示: ON</button>
             </div>
           </div>
 
@@ -587,7 +737,7 @@
 
           <div class="flex gap-1.5 pt-1">
             <input id="dbgCustomCmdInput" type="text" placeholder="例: ping または uds_scan" class="flex-1 px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-xs mono text-cyan-200 focus:outline-none focus:border-cyan-400" />
-            <button type="button" data-action="send-custom-cmd" class="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-600 text-xs font-bold text-white active:scale-95">送信</button>
+            <button type="button" data-action="send-custom-cmd" class="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-600 text-xs font-bold text-white active:scale-95 cursor-pointer">送信</button>
           </div>
         </div>
       </div>
@@ -598,23 +748,23 @@
   <section id="lapAnalyzerView" class="view-hidden flex-1 max-w-[1600px] w-full mx-auto p-3 sm:p-5 flex flex-col gap-4">
     <div class="panel rounded-2xl p-3 sm:p-4 flex flex-wrap items-center justify-between gap-2.5">
       <div class="flex flex-wrap items-center gap-2">
-        <button type="button" data-action="return-live-view" class="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-600 text-xs sm:text-sm font-bold text-white transition">
+        <button type="button" data-action="return-live-view" class="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-600 text-xs sm:text-sm font-bold text-white transition cursor-pointer">
           ← ライブモニターへ戻る
         </button>
         <div class="flex items-center bg-slate-950 p-1 rounded-xl border border-slate-800 gap-1">
-          <button type="button" id="tabBtnRecorder" data-action="switch-lap-tab" data-tab="recorder" class="analyzer-tab active px-3 py-1.5 rounded-lg border border-transparent text-xs sm:text-sm font-bold text-slate-300 transition">⏱️ ライブ計測</button>
-          <button type="button" id="tabBtnAnalyzer" data-action="switch-lap-tab" data-tab="analyzer" class="analyzer-tab px-3 py-1.5 rounded-lg border border-transparent text-xs sm:text-sm font-bold text-slate-300 transition">📊 振り返り・複数比較分析</button>
+          <button type="button" id="tabBtnRecorder" data-action="switch-lap-tab" data-tab="recorder" class="analyzer-tab active px-3 py-1.5 rounded-lg border border-transparent text-xs sm:text-sm font-bold text-slate-300 transition cursor-pointer">⏱️ ライブ計測</button>
+          <button type="button" id="tabBtnAnalyzer" data-action="switch-lap-tab" data-tab="analyzer" class="analyzer-tab px-3 py-1.5 rounded-lg border border-transparent text-xs sm:text-sm font-bold text-slate-300 transition cursor-pointer">📊 振り返り・複数比較分析</button>
         </div>
       </div>
 
       <div class="flex flex-wrap items-center gap-1.5 sm:gap-2">
         <div class="flex items-center gap-1 bg-slate-950 px-2 py-1 rounded-xl border border-slate-800">
-          <button type="button" id="lapPageDemoBtn" data-action="toggle-local-demo" class="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition">▶ FSWデモ走行</button>
-          <button type="button" id="demoSpeedBtn" data-action="cycle-demo-speed" class="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-300 text-xs mono font-bold border border-slate-700" title="デモ速度倍率 (1x / 2x / 4x)">1x</button>
+          <button type="button" id="lapPageDemoBtn" data-action="toggle-local-demo" class="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition cursor-pointer">▶ FSWデモ走行</button>
+          <button type="button" id="demoSpeedBtn" data-action="cycle-demo-speed" class="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-300 text-xs mono font-bold border border-slate-700 cursor-pointer" title="デモ速度倍率 (1x / 2x / 4x)">1x</button>
         </div>
-        <button type="button" data-action="export-session-json" class="px-2.5 py-1.5 rounded-xl bg-emerald-950/90 hover:bg-emerald-900 border border-emerald-700/70 text-emerald-200 text-xs font-bold">💾 JSON保存</button>
-        <button type="button" data-action="export-session-csv" class="px-2.5 py-1.5 rounded-xl bg-sky-950/90 hover:bg-sky-900 border border-sky-700/70 text-sky-200 text-xs font-bold">📄 CSV出力</button>
-        <button type="button" data-action="export-logs-txt" class="px-2.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-300 text-xs font-bold">📝 ログ</button>
+        <button type="button" data-action="export-session-json" class="px-2.5 py-1.5 rounded-xl bg-emerald-950/90 hover:bg-emerald-900 border border-emerald-700/70 text-emerald-200 text-xs font-bold cursor-pointer">💾 JSON保存</button>
+        <button type="button" data-action="export-session-csv" class="px-2.5 py-1.5 rounded-xl bg-sky-950/90 hover:bg-sky-900 border border-sky-700/70 text-sky-200 text-xs font-bold cursor-pointer">📄 CSV出力</button>
+        <button type="button" data-action="export-logs-txt" class="px-2.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-300 text-xs font-bold cursor-pointer">📝 ログ</button>
         <label class="px-2.5 py-1.5 rounded-xl bg-amber-950/80 hover:bg-amber-900 border border-amber-600/70 text-amber-200 text-xs font-bold cursor-pointer inline-flex items-center">
           <span>📂 過去データ読込(複数)</span>
           <input id="importSessionInput" type="file" accept=".json,application/json" multiple class="hidden" />
@@ -624,7 +774,7 @@
 
     <div id="lapToastBanner" class="hidden px-4 py-2.5 rounded-xl bg-cyan-950/90 border border-cyan-500/60 text-cyan-100 text-xs sm:text-sm font-bold flex items-center justify-between">
       <span id="lapToastText">Ready</span>
-      <button type="button" data-action="hide-lap-toast" class="text-cyan-300 hover:text-white text-xs font-bold ml-3">✕</button>
+      <button type="button" data-action="hide-lap-toast" class="text-cyan-300 hover:text-white text-xs font-bold ml-3 cursor-pointer">✕</button>
     </div>
 
     <!-- TAB 1: ライブ計測モード -->
@@ -640,8 +790,8 @@
           </div>
 
           <div class="grid grid-cols-2 gap-2.5">
-            <button type="button" id="btnStartTiming" data-action="start-timing" class="py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white font-black text-sm shadow-lg active:scale-95 transition">▶ 計測スタート</button>
-            <button type="button" id="btnStopTiming" data-action="stop-timing" disabled class="py-3 px-4 rounded-xl bg-slate-800 text-slate-500 border border-slate-700 font-black text-sm transition disabled:opacity-50">⏹ 計測終了・分析</button>
+            <button type="button" id="btnStartTiming" data-action="start-timing" class="py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white font-black text-sm shadow-lg active:scale-95 transition cursor-pointer">▶ 計測スタート</button>
+            <button type="button" id="btnStopTiming" data-action="stop-timing" disabled class="py-3 px-4 rounded-xl bg-slate-800 text-slate-500 border border-slate-700 font-black text-sm transition disabled:opacity-50 cursor-pointer">⏹ 計測終了・分析</button>
           </div>
 
           <div id="prepLapStatusBox" class="p-3 rounded-xl bg-slate-950 border border-slate-800 text-xs">
@@ -694,8 +844,8 @@
           <div class="pt-2 border-t border-slate-800 flex flex-wrap items-center justify-between gap-2 text-xs">
             <span class="mono text-slate-400">SAMPLES: <strong id="recSampleCount" class="text-cyan-300">0</strong></span>
             <div class="flex gap-1.5">
-              <button type="button" data-action="set-sf-here" class="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-[11px] font-bold text-slate-200">📍 現在地S/F</button>
-              <button type="button" data-action="reset-sf-fsw" class="px-2 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 text-[11px] font-bold text-cyan-300">🏁 FSW標準S/F</button>
+              <button type="button" data-action="set-sf-here" class="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-[11px] font-bold text-slate-200 cursor-pointer">📍 現在地S/F</button>
+              <button type="button" data-action="reset-sf-fsw" class="px-2 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 text-[11px] font-bold text-cyan-300 cursor-pointer">🏁 FSW標準S/F</button>
             </div>
           </div>
         </div>
@@ -716,7 +866,7 @@
                 </tr>
               </thead>
               <tbody id="recLapTableBody" class="divide-y divide-slate-800/60 text-slate-200">
-                <tr><td colspan="4" class="py-5 text-center text-slate-500 font-sans">「▶ FSWデモ走行」(4x) →「▶ 計測スタート」で即座にテストできます</td></tr>
+                <tr><td colspan="4" class="py-5 text-center text-slate-500 font-sans">サーキット周回計測用です（公道走行は上部の「🛣️ 公道ログ」をご使用ください）</td></tr>
               </tbody>
             </table>
           </div>
@@ -730,8 +880,8 @@
             <h3 class="text-sm font-extrabold text-white">本コース・S/Fコントロールライン ＆ 走行軌跡</h3>
           </div>
           <div class="flex gap-1.5">
-            <button type="button" data-action="toggle-map-style" class="map-style-btn px-2.5 py-1 rounded-lg bg-slate-800 text-xs font-bold text-cyan-300 border border-slate-700">🛰️ 航空</button>
-            <button type="button" data-action="fit-fsw-recorder-map" class="px-2.5 py-1 rounded-lg bg-slate-800 text-xs font-bold text-slate-200 border border-slate-700">🗺️ 全体</button>
+            <button type="button" data-action="toggle-map-style" class="map-style-btn px-2.5 py-1 rounded-lg bg-slate-800 text-xs font-bold text-cyan-300 border border-slate-700 cursor-pointer">🛰️ 航空</button>
+            <button type="button" data-action="fit-fsw-recorder-map" class="px-2.5 py-1 rounded-lg bg-slate-800 text-xs font-bold text-slate-200 border border-slate-700 cursor-pointer">🗺️ 全体</button>
           </div>
         </div>
         <div class="relative w-full h-[360px] sm:h-[490px] rounded-xl overflow-hidden border border-slate-800 bg-slate-950">
@@ -770,8 +920,8 @@
           <select id="selectCmpLap" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-sky-700/60 text-xs mono text-sky-200"></select>
         </div>
         <div class="lg:col-span-4 flex flex-wrap justify-end gap-2">
-          <button type="button" data-action="generate-sample-compare" class="px-3 py-2 rounded-xl bg-indigo-950 hover:bg-indigo-900 border border-indigo-600/70 text-indigo-200 text-xs font-bold">✨ FSW比較サンプル生成</button>
-          <button type="button" data-action="clear-imported-sessions" class="px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-400 text-xs font-bold">🗑 読込整理</button>
+          <button type="button" data-action="generate-sample-compare" class="px-3 py-2 rounded-xl bg-indigo-950 hover:bg-indigo-900 border border-indigo-600/70 text-indigo-200 text-xs font-bold cursor-pointer">✨ FSW比較サンプル生成</button>
+          <button type="button" data-action="clear-imported-sessions" class="px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-400 text-xs font-bold cursor-pointer">🗑 読込整理</button>
         </div>
       </div>
 
@@ -811,9 +961,9 @@
               <h3 class="text-sm font-extrabold text-white">車速・エンジン回転/横G 距離同期比較</h3>
             </div>
             <div class="flex gap-1.5">
-              <button type="button" data-action="set-subchart" data-mode="rpm" class="subchart-btn px-2 py-1 rounded-lg bg-sky-900/80 text-sky-200 border border-sky-500/60 text-[11px] font-bold">RPM</button>
-              <button type="button" data-action="set-subchart" data-mode="gforce" class="subchart-btn px-2 py-1 rounded-lg bg-slate-800 text-slate-300 border border-slate-700 text-[11px] font-bold">G-Force</button>
-              <button type="button" data-action="reset-corner-focus" class="px-2 py-1 rounded-lg bg-slate-900 text-slate-300 border border-slate-700 text-[11px] font-bold">全区間</button>
+              <button type="button" data-action="set-subchart" data-mode="rpm" class="subchart-btn px-2 py-1 rounded-lg bg-sky-900/80 text-sky-200 border border-sky-500/60 text-[11px] font-bold cursor-pointer">RPM</button>
+              <button type="button" data-action="set-subchart" data-mode="gforce" class="subchart-btn px-2 py-1 rounded-lg bg-slate-800 text-slate-300 border border-slate-700 text-[11px] font-bold cursor-pointer">G-Force</button>
+              <button type="button" data-action="reset-corner-focus" class="px-2 py-1 rounded-lg bg-slate-900 text-slate-300 border border-slate-700 text-[11px] font-bold cursor-pointer">全区間</button>
             </div>
           </div>
           <div id="chartCursorReadout" class="px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-[11px] mono text-slate-300 flex flex-wrap justify-between gap-2">
@@ -827,7 +977,7 @@
         <div class="lg:col-span-4 panel rounded-2xl p-4 flex flex-col gap-2.5">
           <div class="flex items-center justify-between">
             <h3 class="text-sm font-extrabold text-white">🛰️ 走行ライン＆ゴースト同期</h3>
-            <button type="button" data-action="toggle-map-style" class="map-style-btn px-2 py-1 rounded-lg bg-slate-800 text-[11px] font-bold text-cyan-300 border border-slate-700">🛰️ 航空</button>
+            <button type="button" data-action="toggle-map-style" class="map-style-btn px-2 py-1 rounded-lg bg-slate-800 text-[11px] font-bold text-cyan-300 border border-slate-700 cursor-pointer">🛰️ 航空</button>
           </div>
           <div class="relative w-full h-[340px] lg:flex-1 rounded-xl overflow-hidden border border-slate-800 bg-slate-950">
             <div id="analyzerLeafletMap" class="w-full h-full z-10"></div>
@@ -869,7 +1019,7 @@
           <h2 class="text-base sm:text-lg font-black text-white">ARDUINO UNO R4 WiFi // 接続診断モニター</h2>
           <p class="mono text-[11px] text-slate-400">TOPIC: maserati_circuit_test_9981/telemetry</p>
         </div>
-        <button type="button" data-action="close-monitor-modal" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-bold text-slate-200">✕ 閉じる</button>
+        <button type="button" data-action="close-monitor-modal" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-bold text-slate-200 cursor-pointer">✕ 閉じる</button>
       </div>
 
       <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
@@ -928,10 +1078,10 @@
 
       <div class="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-2.5">
         <div class="flex flex-wrap gap-2">
-          <button type="button" data-action="send-ping" class="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold">📡 PING 疎通テスト</button>
-          <button type="button" data-action="set-r4-sim-on" class="px-3.5 py-2 rounded-xl bg-cyan-950 hover:bg-cyan-900 border border-cyan-600/70 text-cyan-200 text-xs font-bold">🧪 R4ダミー送信 ON</button>
-          <button type="button" data-action="set-r4-sim-off" class="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-200 text-xs font-bold">R4ダミー OFF (実車専用)</button>
-          <button type="button" data-action="send-uds-scan" class="px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-sky-300 text-xs font-bold">🔍 実車UDSスキャン</button>
+          <button type="button" data-action="send-ping" class="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold cursor-pointer">📡 PING 疎通テスト</button>
+          <button type="button" data-action="set-r4-sim-on" class="px-3.5 py-2 rounded-xl bg-cyan-950 hover:bg-cyan-900 border border-cyan-600/70 text-cyan-200 text-xs font-bold cursor-pointer">🧪 R4ダミー送信 ON</button>
+          <button type="button" data-action="set-r4-sim-off" class="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-200 text-xs font-bold cursor-pointer">R4ダミー OFF (実車専用)</button>
+          <button type="button" data-action="send-uds-scan" class="px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-sky-300 text-xs font-bold cursor-pointer">🔍 実車UDSスキャン</button>
         </div>
         <p id="cmdFeedbackLbl" class="mono text-[11px] text-cyan-300">COMMAND FEEDBACK: Ready</p>
       </div>
@@ -948,7 +1098,7 @@
     <div class="panel rounded-2xl w-full max-w-md p-5 space-y-4 text-center">
       <div class="flex items-center justify-between">
         <h2 class="text-base font-black text-white">📱 スマホ観戦用 ライブQRコード</h2>
-        <button type="button" data-action="close-qr-modal" class="px-2.5 py-1 rounded-lg bg-slate-800 text-xs font-bold text-slate-300">✕</button>
+        <button type="button" data-action="close-qr-modal" class="px-2.5 py-1 rounded-lg bg-slate-800 text-xs font-bold text-slate-300 cursor-pointer">✕</button>
       </div>
       <div class="flex justify-center">
         <div id="largeQrContainer" class="p-4 bg-white rounded-2xl shadow-xl inline-flex items-center justify-center min-w-[260px] min-h-[260px]"></div>
@@ -966,8 +1116,8 @@
       <div class="flex items-center justify-between">
         <h2 class="text-base font-black text-white">🛰️ LIVE SATELLITE GPS TRACKING</h2>
         <div class="flex gap-2">
-          <button type="button" data-action="toggle-map-style" class="map-style-btn px-3 py-1 rounded-lg bg-slate-800 text-xs font-bold text-cyan-300 border border-slate-700">🛰️ 航空</button>
-          <button type="button" data-action="close-full-map" class="px-3 py-1 rounded-lg bg-slate-800 text-xs font-bold text-white border border-slate-700">✕ 閉じる</button>
+          <button type="button" data-action="toggle-map-style" class="map-style-btn px-3 py-1 rounded-lg bg-slate-800 text-xs font-bold text-cyan-300 border border-slate-700 cursor-pointer">🛰️ 航空</button>
+          <button type="button" data-action="close-full-map" class="px-3 py-1 rounded-lg bg-slate-800 text-xs font-bold text-white border border-slate-700 cursor-pointer">✕ 閉じる</button>
         </div>
       </div>
       <div class="flex-1 rounded-xl overflow-hidden border border-slate-800 bg-slate-950">
@@ -986,10 +1136,12 @@
 
       // ================= 1. 定数・車両プロファイル定義 =================
       const DEFAULT_SHARE_URL = "https://daisonfamily.github.io/maserati-telemetry-data/";
-      const MQTT_WSS_URL = "wss://broker.emqx.io:8084/mqtt";
-      const MQTT_TOPIC = "maserati_circuit_test_9981/telemetry";
-      const MQTT_CMD = "maserati_circuit_test_9981/cmd";
+      const MQTT_WSS_URL      = "wss://broker.emqx.io:8084/mqtt";
+      const MQTT_TOPIC        = "maserati_circuit_test_9981/telemetry";
+      const MQTT_CMD          = "maserati_circuit_test_9981/cmd";
       const DEBUG_STORAGE_KEY = "maserati_debug_autosave_v2";
+      const ROAD_DB_NAME      = "maserati_road_logger_db_v1";
+      const ROAD_STORE_NAME   = "road_sessions";
 
       const VEHICLE_PROFILES = {
         GRECALE:      { name: "Maserati Grecale",      sub: "2.0 MHEV / Nettuno V6 • Q4 AWD",      drive: "Q4 AWD",    maxRpm: 7500, redline: 6800, maxBoost: 1.85, isRwdOnly: false, defaultFront: 25, baseTpF: 2.40, baseTpR: 2.30, color: "#0ea5e9" },
@@ -1046,14 +1198,14 @@
         udsResponses: [],
         totalSavedCount: 0
       };
-      let consolePaused = false;
+      let consolePaused      = false;
       let consoleShowRawJson = true;
-      let signalFilterMode = "all";
+      let signalFilterMode   = "all";
 
       // ================= 2. 富士スピードウェイ(4,563m) コースデータ =================
-      const FSW_LENGTH_M = 4563;
+      const FSW_LENGTH_M  = 4563;
       const FSW_SECTORS_M = [1600, 3150, 4563];
-      const FSW_CORNERS = [
+      const FSW_CORNERS   = [
         { id: "T1",  name: "T1: TGRコーナー",        startM: 460,  endM: 1020, apexM: 760,  targetSpd: 78  },
         { id: "T3",  name: "T3: コカ・コーラ",       startM: 1120, endM: 1620, apexM: 1380, targetSpd: 132 },
         { id: "T4",  name: "T4-5: トヨペット100R",   startM: 1620, endM: 2220, apexM: 1940, targetSpd: 162 },
@@ -1079,18 +1231,17 @@
       ];
 
       // ================= 3. アプリ状態変数 =================
-      let currentModel = "GRECALE";
-      let peakSpeed = 0;
-      let maxTotalG = 0;
-      let lastLat = 35.371700;
-      let lastLng = 138.926700;
-      let mapStyleMode = "satellite";
-      let mapFollowCar = true;
-      let activeViewMode = "live";
-      let activeLapTab = "recorder";
+      let currentModel       = "GRECALE";
+      let peakSpeed          = 0;
+      let maxTotalG          = 0;
+      let lastLat            = 35.371700;
+      let lastLng            = 138.926700;
+      let mapStyleMode       = "satellite";
+      let mapFollowCar       = true;
+      let activeViewMode     = "live";
+      let activeLapTab       = "recorder";
       let activeSubChartMode = "rpm";
-      let focusedCornerId = null;
-      let chartHoverDist = null;
+      let focusedCornerId    = null;
 
       // 60fps スムージング補間用ターゲット＆現在表示値
       const smoothTarget = { rpm: 0, spd: 0, bst: 0, lod: 0, ped: 0, brk: 0, str: 0, gx: 0, gy: 0 };
@@ -1098,46 +1249,60 @@
       let   smoothLastD  = null;
 
       let latestTireState = { tp: [0, 0, 0, 0], tt: [0, 0, 0, 0] };
-      let simTireTemps = [52.0, 52.0, 55.0, 55.0];
+      let simTireTemps    = [52.0, 52.0, 55.0, 55.0];
 
-      let fswNodes = [];
+      let fswNodes    = [];
       let controlLine = null;
       let miniMap = null, miniTile = null, miniPoly = null, miniMarker = null;
       let fullMap = null, fullTile = null, fullPoly = null, fullMarker = null;
-      let recMap = null, recTile = null, recTrackBg = null, recSfLine = null, recLivePoly = null, recMarker = null;
-      let anMap = null, anTile = null, anRefPoly = null, anCmpPoly = null, anGhostA = null, anGhostB = null;
+      let recMap  = null, recTile  = null, recTrackBg = null, recSfLine = null, recLivePoly = null, recMarker = null;
+      let anMap   = null, anTile   = null, anRefPoly  = null, anCmpPoly = null;
       let trackPoints = [];
 
       let localDemoTimer = null;
-      let demoDistM = 0;
-      let demoPrevSpd = 100;
-      let demoLapSeed = 1;
-      let demoSpeedMult = 1;
+      let demoDistM      = 0;
+      let demoPrevSpd    = 100;
+      let demoSpeedMult  = 1;
 
-      let mqttClient = null;
-      let mqttConnected = false;
-      let lastArduinoRxTime = 0;
-      let totalPackets = 0;
-      let rxTimestamps = [];
-      let pendingPingTs = 0;
-      let arduinoIp = "";
+      let mqttClient         = null;
+      let mqttConnected      = false;
+      let lastArduinoRxTime  = 0;
+      let totalPackets       = 0;
+      let rxTimestamps       = [];
+      let pendingPingTs      = 0;
+      let arduinoIp          = "";
       let arduinoSyncedModel = "";
-      let arduinoProtoTag = "";
+      let arduinoProtoTag    = "";
       let lastModelSyncCmdTs = 0;
-      let arduinoSimActive = false;
-      let arduinoCanOk = false;
-      let arduinoGpsFix = false;
-      let arduinoGpsSats = 0;
-      let lastWasDemoSource = true;
-      let latestRssi = null;
-      let latestUptime = 0;
-      let latestRawJsonStr = "";
+      let arduinoSimActive   = false;
+      let arduinoCanOk       = false;
+      let arduinoGpsFix      = false;
+      let arduinoGpsSats     = 0;
+      let latestRssi         = null;
+      let latestUptime       = 0;
+      let latestRawJsonStr   = "";
 
-      // ラップ計測セッションリポジトリ
-      let sessionsRepo = [];
+      // サーキットラップ計測リポジトリ
+      let sessionsRepo     = [];
       let activeRecSession = null;
-      let recPrevLat = null;
-      let recPrevLng = null;
+      let recPrevLat       = null;
+      let recPrevLng       = null;
+
+      // 公道ドライブ・長時間ロガー状態
+      let roadSessionsRepo     = [];
+      let activeRoadSession    = null;
+      let roadPrevLat          = null;
+      let roadPrevLng          = null;
+      let roadMap              = null;
+      let roadTile             = null;
+      let roadRouteLayerGroup  = null;
+      let roadMarkerLayerGroup = null;
+      let roadCarMarker        = null;
+      let roadSeekMarker       = null;
+      let roadFollowCar        = true;
+      let roadHoverIdx         = null;
+      let roadDbInstance       = null;
+      let roadLastDbSaveMs     = 0;
 
       // ================= 4. 共通ユーティリティ関数 =================
       function haversineM(lat1, lng1, lat2, lng2) {
@@ -1149,6 +1314,14 @@
                   Math.cos(lat1 * toRad) * Math.cos(lat2 * toRad) *
                   Math.sin(dLng / 2) * Math.sin(dLng / 2);
         return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      }
+
+      function formatHms(totalSec) {
+        const s = Math.max(0, Math.floor(totalSec || 0));
+        const hh = String(Math.floor(s / 3600)).padStart(2, "0");
+        const mm = String(Math.floor((s % 3600) / 60)).padStart(2, "0");
+        const ss = String(s % 60).padStart(2, "0");
+        return `${hh}:${mm}:${ss}`;
       }
 
       function formatLapTime(sec) {
@@ -1182,7 +1355,7 @@
           const row = document.createElement("div");
           row.textContent = line;
           el.prepend(row);
-          while (el.children.length > 50) {
+          while (el.children.length > 60) {
             el.removeChild(el.lastChild);
           }
         }
@@ -1192,6 +1365,14 @@
       function showLapToast(msg) {
         const banner = document.getElementById("lapToastBanner");
         const txt = document.getElementById("lapToastText");
+        if (!banner || !txt) return;
+        txt.textContent = msg;
+        banner.classList.remove("hidden");
+      }
+
+      function showRoadToast(msg) {
+        const banner = document.getElementById("roadToastBanner");
+        const txt = document.getElementById("roadToastText");
         if (!banner || !txt) return;
         txt.textContent = msg;
         banner.classList.remove("hidden");
@@ -1307,7 +1488,7 @@
           btn.dataset.action = "select-vehicle";
           btn.dataset.model = key;
           btn.id = `vehBtn_${key}`;
-          btn.className = "w-full text-left p-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 transition flex items-center justify-between gap-2";
+          btn.className = "w-full text-left p-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 transition flex items-center justify-between gap-2 cursor-pointer";
           btn.innerHTML = `
             <div class="pointer-events-none min-w-0">
               <div class="flex items-center gap-2">
@@ -1359,7 +1540,6 @@
           }
         });
 
-        // 実車モードかつCAN未確立時はゼロ表示リセットを維持
         if (!localDemoTimer && !arduinoSimActive && !arduinoCanOk) {
           updateTyreMonitor(0, 0, [0, 0, 0, 0], [0, 0, 0, 0], true);
         }
@@ -1456,7 +1636,7 @@
 
       function drawChassisDiagram(awdF, lsdL, lsdR) {
         const canvas = document.getElementById("chassisCanvas");
-        if (!canvas) return;
+        if (!canvas || !canvas.parentElement) return;
         const rect = canvas.parentElement.getBoundingClientRect();
         if (rect.width <= 0 || rect.height <= 0) return;
         const dpr = window.devicePixelRatio || 1;
@@ -1479,7 +1659,6 @@
         ctx.lineTo(cx, rearY);
         ctx.stroke();
 
-        // Front Axle
         ctx.strokeStyle = awdF > 0 ? "rgba(56, 189, 248, 0.75)" : "rgba(71, 85, 105, 0.35)";
         ctx.lineWidth = awdF > 0 ? 4 : 2.5;
         ctx.beginPath();
@@ -1487,7 +1666,6 @@
         ctx.lineTo(cx + halfTrack, frontY);
         ctx.stroke();
 
-        // Rear Axle
         ctx.strokeStyle = (lsdL > 0 || lsdR > 0) ? "rgba(244, 63, 94, 0.85)" : "rgba(71, 85, 105, 0.35)";
         ctx.lineWidth = (lsdL > 0 || lsdR > 0) ? 4.5 : 2.5;
         ctx.beginPath();
@@ -1495,7 +1673,6 @@
         ctx.lineTo(cx + halfTrack, rearY);
         ctx.stroke();
 
-        // Center Diff / Gearbox Node
         ctx.fillStyle = "#0f172a";
         ctx.strokeStyle = "#38bdf8";
         ctx.lineWidth = 2;
@@ -1507,7 +1684,7 @@
 
       function drawGForceBall(gx, gy) {
         const canvas = document.getElementById("gForceCanvas");
-        if (!canvas) return;
+        if (!canvas || !canvas.parentElement) return;
         const rect = canvas.parentElement.getBoundingClientRect();
         if (rect.width <= 0 || rect.height <= 0) return;
         const dpr = window.devicePixelRatio || 1;
@@ -1586,8 +1763,8 @@
         const brkValEl = document.getElementById("brakeValue");
         const brkBarEl = document.getElementById("brakeBar");
         const strValEl = document.getElementById("steerValue");
-        const latGEl = document.getElementById("latGVal");
-        const lonGEl = document.getElementById("lonGVal");
+        const latGEl   = document.getElementById("latGVal");
+        const lonGEl   = document.getElementById("lonGVal");
 
         if (rpmValEl) rpmValEl.textContent = rpmInt;
         if (rpmBarEl) rpmBarEl.style.width = `${Math.min(100, Math.max(0, (smoothCur.rpm / p.maxRpm) * 100))}%`;
@@ -1612,7 +1789,6 @@
         if (latGEl) latGEl.textContent = `${smoothCur.gx.toFixed(2)} G`;
         if (lonGEl) lonGEl.textContent = `${smoothCur.gy.toFixed(2)} G`;
 
-        // シフトライト更新
         const activeLeds = Math.round((smoothCur.rpm / p.redline) * 12);
         for (let i = 0; i < 12; i++) {
           const led = document.getElementById(`shiftLed_${i}`);
@@ -1711,6 +1887,7 @@
         }
 
         processLapTelemetryPoint(d);
+        processRoadTelemetryPoint(d);
       }
 
       // ================= 7. Leaflet 衛星マップ初期化・更新 =================
@@ -1740,6 +1917,15 @@
           L.polyline(fswLatLngs, { color: "#64748b", weight: 2, opacity: 0.45 }).addTo(miniMap);
           miniPoly = L.polyline([], { color: "#f43f5e", weight: 3.5 }).addTo(miniMap);
           miniMarker = L.marker([lastLat, lastLng], { icon: createBeaconIcon() }).addTo(miniMap);
+        }
+
+        const roadEl = document.getElementById("roadLeafletMap");
+        if (roadEl && !roadMap) {
+          roadMap = L.map(roadEl, { zoomControl: true, attributionControl: false }).setView([lastLat, lastLng], 15);
+          roadTile = L.tileLayer(getTileUrl(), { maxZoom: 19 }).addTo(roadMap);
+          roadRouteLayerGroup = L.layerGroup().addTo(roadMap);
+          roadMarkerLayerGroup = L.layerGroup().addTo(roadMap);
+          roadCarMarker = L.marker([lastLat, lastLng], { icon: createBeaconIcon() }).addTo(roadMap);
         }
 
         const recEl = document.getElementById("recorderLeafletMap");
@@ -1773,12 +1959,12 @@
           fullPoly = L.polyline(trackPoints, { color: "#f43f5e", weight: 4 }).addTo(fullMap);
           fullMarker = L.marker([lastLat, lastLng], { icon: createBeaconIcon() }).addTo(fullMap);
         }
-        setTimeout(() => fullMap.invalidateSize(), 120);
+        setTimeout(() => { if (fullMap) fullMap.invalidateSize(); }, 120);
       }
 
       function updateMapTiles() {
         const url = getTileUrl();
-        [miniTile, fullTile, recTile, anTile].forEach((t) => { if (t) t.setUrl(url); });
+        [miniTile, fullTile, recTile, anTile, roadTile].forEach((t) => { if (t) t.setUrl(url); });
         document.querySelectorAll(".map-style-btn").forEach((btn) => {
           btn.textContent = mapStyleMode === "satellite" ? "🗺️ 地図" : "🛰️ 航空";
         });
@@ -1799,6 +1985,609 @@
 
         if (recMarker) recMarker.setLatLng(ll);
         if (recLivePoly) recLivePoly.setLatLngs(trackPoints.slice(-160));
+
+        if (roadCarMarker) roadCarMarker.setLatLng(ll);
+        if (roadMap && roadFollowCar && activeRoadSession) {
+          roadMap.panTo(ll, { animate: false });
+        }
+      }
+
+      // ================= 7.5 新設：公道ドライブ・長時間ロガーエンジン (IndexedDB + 波形 + 出力) =================
+      function initRoadIndexedDb() {
+        if (!window.indexedDB) {
+          const badge = document.getElementById("roadDbBadge");
+          if (badge) badge.textContent = "MEM-ONLY MODE";
+          return;
+        }
+        const req = indexedDB.open(ROAD_DB_NAME, 1);
+        req.onupgradeneeded = (ev) => {
+          const db = ev.target.result;
+          if (!db.objectStoreNames.contains(ROAD_STORE_NAME)) {
+            db.createObjectStore(ROAD_STORE_NAME, { keyPath: "id" });
+          }
+        };
+        req.onsuccess = (ev) => {
+          roadDbInstance = ev.target.result;
+          const badge = document.getElementById("roadDbBadge");
+          if (badge) badge.textContent = "DB READY (大容量保存)";
+          loadAllRoadSessionsFromDb();
+        };
+        req.onerror = () => {
+          const badge = document.getElementById("roadDbBadge");
+          if (badge) badge.textContent = "DB FALLBACK";
+        };
+      }
+
+      function saveRoadSessionToDb(sess) {
+        if (!roadDbInstance || !sess) return;
+        try {
+          const tx = roadDbInstance.transaction(ROAD_STORE_NAME, "readwrite");
+          const store = tx.objectStore(ROAD_STORE_NAME);
+          store.put(sess);
+          const badge = document.getElementById("roadDbBadge");
+          if (badge) badge.textContent = `DB SAVED (${sess.points.length}pts)`;
+        } catch (e) {}
+      }
+
+      function loadAllRoadSessionsFromDb() {
+        if (!roadDbInstance) return;
+        try {
+          const tx = roadDbInstance.transaction(ROAD_STORE_NAME, "readonly");
+          const store = tx.objectStore(ROAD_STORE_NAME);
+          const req = store.getAll();
+          req.onsuccess = () => {
+            const list = req.result || [];
+            list.sort((a, b) => (b.startedMs || 0) - (a.startedMs || 0));
+            roadSessionsRepo = list;
+            refreshRoadArchiveSelect();
+          };
+        } catch (e) {}
+      }
+
+      function deleteRoadSessionFromDb(id) {
+        roadSessionsRepo = roadSessionsRepo.filter((s) => s.id !== id);
+        if (roadDbInstance) {
+          try {
+            const tx = roadDbInstance.transaction(ROAD_STORE_NAME, "readwrite");
+            tx.objectStore(ROAD_STORE_NAME).delete(id);
+          } catch (e) {}
+        }
+        refreshRoadArchiveSelect();
+      }
+
+      function getSpeedHeatColor(spdKmh) {
+        if (spdKmh < 40) return "#38bdf8";   // シアン
+        if (spdKmh < 70) return "#10b981";   // エメラルド
+        if (spdKmh < 100) return "#f59e0b";  // アンバー
+        return "#f43f5e";                     // ローズ
+      }
+
+      function startRoadLogging() {
+        if (activeRoadSession) return;
+        const prof = VEHICLE_PROFILES[currentModel] || VEHICLE_PROFILES.GRECALE;
+        const nowStr = new Date().toLocaleString("ja-JP", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+
+        activeRoadSession = {
+          id: `ROAD_${Date.now()}`,
+          title: `公道ドライブ (${nowStr}) - ${prof.name}`,
+          vehicleCode: currentModel,
+          vehicleName: prof.name,
+          startedAtIso: new Date().toISOString(),
+          startedMs: Date.now(),
+          perfStartMs: performance.now(),
+          distM: 0,
+          maxSpd: 0,
+          maxRpm: 0,
+          maxBoost: -1.0,
+          maxOil: 0,
+          maxWat: 0,
+          markers: [],
+          points: []
+        };
+        roadPrevLat = (lastLat !== 0) ? lastLat : null;
+        roadPrevLng = (lastLng !== 0) ? lastLng : null;
+        roadHoverIdx = null;
+        roadFollowCar = true;
+
+        if (roadRouteLayerGroup) roadRouteLayerGroup.clearLayers();
+        if (roadMarkerLayerGroup) roadMarkerLayerGroup.clearLayers();
+
+        const btnStart = document.getElementById("btnRoadStart");
+        const btnStop  = document.getElementById("btnRoadStop");
+        const btnMark  = document.getElementById("btnRoadMark");
+        const topDot   = document.getElementById("topRoadRecDot");
+        const topTxt   = document.getElementById("topRoadModeText");
+        const statEl   = document.getElementById("roadStatStatus");
+
+        if (btnStart) btnStart.disabled = true;
+        if (btnStop) {
+          btnStop.disabled = false;
+          btnStop.className = "py-2 px-4 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-black text-xs sm:text-sm shadow-lg active:scale-95 transition cursor-pointer";
+        }
+        if (btnMark) btnMark.disabled = false;
+        if (topDot) topDot.className = "w-2 h-2 rounded-full bg-rose-400 animate-ping pointer-events-none";
+        if (topTxt) topTxt.textContent = "🛣️ 公道記録中";
+        if (statEl) {
+          statEl.textContent = "RECORDING";
+          statEl.className = "text-xs sm:text-sm text-emerald-400 animate-pulse";
+        }
+
+        saveRoadSessionToDb(activeRoadSession);
+        refreshRoadArchiveSelect();
+        showRoadToast("公道ドライブの連続ログ記録を開始しました（S/Fライン不要・5秒ごとに自動バックアップ保存）");
+        appendLog(`公道ドライブ記録開始: ${activeRoadSession.title}`);
+      }
+
+      function stopRoadLogging() {
+        if (!activeRoadSession) return;
+        const finished = activeRoadSession;
+        finished.endedAtIso = new Date().toISOString();
+        finished.durationSec = (performance.now() - finished.perfStartMs) / 1000;
+
+        saveRoadSessionToDb(finished);
+        const exists = roadSessionsRepo.findIndex((s) => s.id === finished.id);
+        if (exists >= 0) roadSessionsRepo[exists] = finished;
+        else roadSessionsRepo.unshift(finished);
+
+        activeRoadSession = null;
+
+        const btnStart = document.getElementById("btnRoadStart");
+        const btnStop  = document.getElementById("btnRoadStop");
+        const btnMark  = document.getElementById("btnRoadMark");
+        const topDot   = document.getElementById("topRoadRecDot");
+        const topTxt   = document.getElementById("topRoadModeText");
+        const statEl   = document.getElementById("roadStatStatus");
+
+        if (btnStart) btnStart.disabled = false;
+        if (btnStop) {
+          btnStop.disabled = true;
+          btnStop.className = "py-2 px-4 rounded-xl bg-slate-800 text-slate-500 border border-slate-700 font-black text-xs sm:text-sm transition disabled:opacity-50 cursor-pointer";
+        }
+        if (btnMark) btnMark.disabled = true;
+        if (topDot) topDot.className = "w-2 h-2 rounded-full bg-white/80 pointer-events-none";
+        if (topTxt) topTxt.textContent = "🛣️ 公道ログ";
+        if (statEl) {
+          statEl.textContent = "SAVED";
+          statEl.className = "text-xs sm:text-sm text-cyan-300";
+        }
+
+        refreshRoadArchiveSelect();
+        fitRoadSessionBounds(finished);
+        showRoadToast(`記録完了（${finished.points.length}サンプル / ${(finished.distM / 1000).toFixed(2)}km）。CSV・GPX・JSONで保存できます。`);
+        appendLog(`公道ドライブ記録完了: ${finished.points.length}サンプル`);
+      }
+
+      function addRoadCheckpoint() {
+        if (!activeRoadSession) return;
+        const idx = activeRoadSession.points.length;
+        const elapsedSec = (performance.now() - activeRoadSession.perfStartMs) / 1000;
+        const no = activeRoadSession.markers.length + 1;
+        const cp = {
+          no,
+          idx,
+          elapsedSec,
+          distKm: activeRoadSession.distM / 1000,
+          lat: lastLat,
+          lng: lastLng,
+          spd: Math.round(smoothTarget.spd || 0),
+          label: `CP#${no} (${formatHms(elapsedSec)} / ${Math.round(smoothTarget.spd || 0)}km/h)`
+        };
+        activeRoadSession.markers.push(cp);
+
+        if (roadMarkerLayerGroup && typeof L !== "undefined") {
+          L.circleMarker([cp.lat, cp.lng], {
+            radius: 7,
+            color: "#ffffff",
+            weight: 2,
+            fillColor: "#f59e0b",
+            fillOpacity: 1
+          }).bindTooltip(cp.label).addTo(roadMarkerLayerGroup);
+        }
+
+        updateRoadMarkersSummary(activeRoadSession);
+        showRoadToast(`チェックポイント #${no} を打刻しました`);
+      }
+
+      function updateRoadMarkersSummary(sess) {
+        const el = document.getElementById("roadMarkersSummary");
+        if (!el || !sess) return;
+        if (!sess.markers || sess.markers.length === 0) {
+          el.innerHTML = `<span>📍 チェックポイント: 0件（走行中に「📍 地点マーク」で記録できます）</span>`;
+          return;
+        }
+        el.innerHTML = sess.markers.map((m) =>
+          `<span class="px-2 py-0.5 rounded bg-amber-950/80 border border-amber-600/60 text-amber-200">📍 ${escapeHtml(m.label)}</span>`
+        ).join("");
+      }
+
+      function processRoadTelemetryPoint(d) {
+        if (!activeRoadSession) return;
+        const nowPerf = performance.now();
+        const elapsedSec = (nowPerf - activeRoadSession.perfStartMs) / 1000;
+        const spd = Number(d.spd || 0);
+        const rpm = Math.round(Number(d.rpm || 0));
+        const bst = Number(d.bst || 0);
+        const oil = Number(d.oil || 0);
+        const wat = Number(d.wat || 0);
+
+        // 停車中（2km/h未満）のGPSドリフトによる距離誤加算を防止
+        if (roadPrevLat !== null && roadPrevLng !== null && lastLat !== 0 && lastLng !== 0) {
+          const stepM = haversineM(roadPrevLat, roadPrevLng, lastLat, lastLng);
+          if (spd >= 2 && stepM >= 1.2 && stepM <= 180) {
+            activeRoadSession.distM += stepM;
+            if (roadRouteLayerGroup && typeof L !== "undefined") {
+              L.polyline([[roadPrevLat, roadPrevLng], [lastLat, lastLng]], {
+                color: getSpeedHeatColor(spd),
+                weight: 4.5,
+                opacity: 0.9
+              }).addTo(roadRouteLayerGroup);
+            }
+            roadPrevLat = lastLat;
+            roadPrevLng = lastLng;
+          }
+        } else if (lastLat !== 0 && lastLng !== 0) {
+          roadPrevLat = lastLat;
+          roadPrevLng = lastLng;
+        }
+
+        if (spd > activeRoadSession.maxSpd) activeRoadSession.maxSpd = Math.round(spd);
+        if (rpm > activeRoadSession.maxRpm) activeRoadSession.maxRpm = rpm;
+        if (bst > activeRoadSession.maxBoost) activeRoadSession.maxBoost = bst;
+        if (oil > activeRoadSession.maxOil) activeRoadSession.maxOil = oil;
+        if (wat > activeRoadSession.maxWat) activeRoadSession.maxWat = wat;
+
+        const pt = {
+          ts: new Date().toISOString(),
+          t: Number(elapsedSec.toFixed(2)),
+          dKm: Number((activeRoadSession.distM / 1000).toFixed(4)),
+          lat: Number(lastLat.toFixed(6)),
+          lng: Number(lastLng.toFixed(6)),
+          spd: Math.round(spd),
+          rpm: rpm,
+          gear: Number(d.gear || 0),
+          bst: Number(bst.toFixed(2)),
+          ped: Math.round(Number(d.ped || 0)),
+          thr: Math.round(Number(d.thr || 0)),
+          brk: Math.round(Number(d.brk || 0)),
+          lod: Math.round(Number(d.lod || 0)),
+          str: Number(Number(d.str || 0).toFixed(1)),
+          gx: Number(Number(d.gx || 0).toFixed(2)),
+          gy: Number(Number(d.gy || 0).toFixed(2)),
+          oil: Number(oil.toFixed(1)),
+          tra: Number(Number(d.tra || 0).toFixed(1)),
+          wat: Number(wat.toFixed(1)),
+          iat: Number(Number(d.iat || 0).toFixed(1)),
+          ign: Number(Number(d.ign || 0).toFixed(1)),
+          afr: Number(Number(d.afr || 1).toFixed(2)),
+          bat: Number(Number(d.bat || 0).toFixed(1)),
+          awdF: Number(d.awd_f || 0),
+          lsdL: Number(d.lsd_l || 50),
+          tp: latestTireState.tp.map((v) => Number(Number(v || 0).toFixed(2))),
+          tt: latestTireState.tt.map((v) => Number(Number(v || 0).toFixed(1)))
+        };
+
+        activeRoadSession.points.push(pt);
+        // 100,000ポイント（約3.5時間分）まで保持
+        if (activeRoadSession.points.length > 100000) {
+          activeRoadSession.points.shift();
+        }
+
+        // 5秒ごとにIndexedDBへ自動バックアップ
+        const nowMs = Date.now();
+        if (nowMs - roadLastDbSaveMs >= 5000) {
+          roadLastDbSaveMs = nowMs;
+          saveRoadSessionToDb(activeRoadSession);
+        }
+
+        if (activeViewMode === "road") {
+          updateRoadStatsUI(activeRoadSession, elapsedSec);
+          drawRoadTelemetryCharts(activeRoadSession);
+        }
+      }
+
+      function updateRoadStatsUI(sess, elapsedSecOverride) {
+        if (!sess) return;
+        const sec = elapsedSecOverride !== undefined
+          ? elapsedSecOverride
+          : (sess.durationSec || (sess.points.length ? sess.points[sess.points.length - 1].t : 0));
+        const distKm = (sess.distM || 0) / 1000;
+        const avgSpd = sec > 2 ? Math.round((distKm / (sec / 3600))) : 0;
+
+        const durEl  = document.getElementById("roadStatDuration");
+        const dstEl  = document.getElementById("roadStatDist");
+        const smpEl  = document.getElementById("roadStatSamples");
+        const spdEl  = document.getElementById("roadStatSpeed");
+        const rpmEl  = document.getElementById("roadStatMaxRpm");
+        const bstEl  = document.getElementById("roadStatMaxBoost");
+        const tmpEl  = document.getElementById("roadStatMaxTemp");
+
+        if (durEl) durEl.textContent = formatHms(sec);
+        if (dstEl) dstEl.textContent = `${distKm.toFixed(2)} km`;
+        if (smpEl) smpEl.textContent = `${sess.points.length.toLocaleString()} pts`;
+        if (spdEl) spdEl.textContent = `${sess.maxSpd || 0} / ${avgSpd} km/h`;
+        if (rpmEl) rpmEl.textContent = `${sess.maxRpm || 0} rpm`;
+        if (bstEl) bstEl.textContent = `${(sess.maxBoost > -0.9 ? sess.maxBoost : 0).toFixed(2)} bar`;
+        if (tmpEl) tmpEl.textContent = `${sess.maxOil > 0 ? sess.maxOil.toFixed(0) : "--"} / ${sess.maxWat > 0 ? sess.maxWat.toFixed(0) : "--"} °C`;
+      }
+
+      function refreshRoadArchiveSelect() {
+        const sel = document.getElementById("roadArchiveSelect");
+        if (!sel) return;
+        const items = [];
+        if (activeRoadSession) {
+          items.push({ id: activeRoadSession.id, label: `🔴 [記録中] ${activeRoadSession.title} (${activeRoadSession.points.length}pts)` });
+        }
+        roadSessionsRepo.forEach((s) => {
+          if (activeRoadSession && s.id === activeRoadSession.id) return;
+          const km = ((s.distM || 0) / 1000).toFixed(2);
+          items.push({ id: s.id, label: `${s.title} [${km}km / ${s.points ? s.points.length : 0}pts]` });
+        });
+        if (items.length === 0) {
+          sel.innerHTML = `<option value="">記録済みデータなし（「▶ 走行ログ記録スタート」で開始）</option>`;
+          return;
+        }
+        sel.innerHTML = items.map((it) => `<option value="${escapeHtml(it.id)}">${escapeHtml(it.label)}</option>`).join("");
+      }
+
+      function getCurrentViewRoadSession() {
+        const sel = document.getElementById("roadArchiveSelect");
+        const targetId = sel ? sel.value : "";
+        if (activeRoadSession && (!targetId || targetId === activeRoadSession.id)) {
+          return activeRoadSession;
+        }
+        return roadSessionsRepo.find((s) => s.id === targetId) || activeRoadSession || roadSessionsRepo[0] || null;
+      }
+
+      function renderSelectedRoadSession() {
+        const sess = getCurrentViewRoadSession();
+        if (!sess) return;
+        roadHoverIdx = null;
+        updateRoadStatsUI(sess);
+        updateRoadMarkersSummary(sess);
+
+        if (roadRouteLayerGroup && roadMarkerLayerGroup && typeof L !== "undefined") {
+          roadRouteLayerGroup.clearLayers();
+          roadMarkerLayerGroup.clearLayers();
+          const pts = sess.points || [];
+          for (let i = 1; i < pts.length; i++) {
+            const p0 = pts[i - 1];
+            const p1 = pts[i];
+            if (p0.lat === 0 || p1.lat === 0) continue;
+            const d = haversineM(p0.lat, p0.lng, p1.lat, p1.lng);
+            if (d > 250) continue;
+            L.polyline([[p0.lat, p0.lng], [p1.lat, p1.lng]], {
+              color: getSpeedHeatColor(p1.spd),
+              weight: 4.5,
+              opacity: 0.9
+            }).addTo(roadRouteLayerGroup);
+          }
+          (sess.markers || []).forEach((m) => {
+            L.circleMarker([m.lat, m.lng], {
+              radius: 7,
+              color: "#ffffff",
+              weight: 2,
+              fillColor: "#f59e0b",
+              fillOpacity: 1
+            }).bindTooltip(m.label).addTo(roadMarkerLayerGroup);
+          });
+          fitRoadSessionBounds(sess);
+        }
+        drawRoadTelemetryCharts(sess);
+      }
+
+      function fitRoadSessionBounds(sess) {
+        if (!roadMap || !sess || !sess.points || sess.points.length === 0 || typeof L === "undefined") return;
+        const valid = sess.points.filter((p) => p.lat !== 0 && p.lng !== 0).map((p) => [p.lat, p.lng]);
+        if (valid.length >= 2) {
+          roadMap.fitBounds(L.latLngBounds(valid), { padding: [24, 24] });
+        } else if (valid.length === 1) {
+          roadMap.setView(valid[0], 16);
+        }
+      }
+
+      function drawRoadTelemetryCharts(sess) {
+        const canvas = document.getElementById("roadTelemetryCanvas");
+        if (!canvas || !canvas.parentElement) return;
+        const rect = canvas.parentElement.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) return;
+        const dpr = window.devicePixelRatio || 1;
+        canvas.width = rect.width * dpr;
+        canvas.height = rect.height * dpr;
+        const ctx = canvas.getContext("2d");
+        ctx.scale(dpr, dpr);
+
+        const w = rect.width;
+        const h = rect.height;
+        ctx.clearRect(0, 0, w, h);
+
+        const pts = (sess && sess.points) ? sess.points : [];
+        if (pts.length < 2) {
+          ctx.fillStyle = "#64748b";
+          ctx.font = "12px Inter, sans-serif";
+          ctx.textAlign = "center";
+          ctx.fillText("走行ログ記録を開始すると4チャンネル時系列波形がリアルタイムに描画されます", w / 2, h / 2);
+          return;
+        }
+
+        // 描画高速化のため2,000点超は自動間引きサンプリング
+        const stride = Math.max(1, Math.floor(pts.length / 1800));
+        const sampled = [];
+        for (let i = 0; i < pts.length; i += stride) sampled.push(pts[i]);
+        if (sampled[sampled.length - 1] !== pts[pts.length - 1]) sampled.push(pts[pts.length - 1]);
+
+        const padL = 44, padR = 14, padT = 14, padB = 22, gap = 12;
+        const bandH = (h - padT - padB - gap * 3) / 4;
+        const plotW = w - padL - padR;
+
+        const bands = [
+          { title: "SPEED (km/h)", min: 0, max: 220, lines: [{ fn: (p) => p.spd, col: "#38bdf8" }] },
+          { title: "RPM / BOOST",  min: 0, max: 8000, lines: [
+            { fn: (p) => p.rpm, col: "#f59e0b" },
+            { fn: (p) => Math.max(0, (p.bst + 0.8) * 2800), col: "#22d3ee" }
+          ]},
+          { title: "PEDAL / BRAKE (%)", min: 0, max: 100, lines: [
+            { fn: (p) => p.ped, col: "#10b981" },
+            { fn: (p) => p.brk, col: "#f43f5e" }
+          ]},
+          { title: "OIL / TRANS / WATER (°C)", min: 20, max: 140, lines: [
+            { fn: (p) => p.oil, col: "#fb923c" },
+            { fn: (p) => p.tra, col: "#c084fc" },
+            { fn: (p) => p.wat, col: "#34d399" }
+          ]}
+        ];
+
+        bands.forEach((b, bIdx) => {
+          const y0 = padT + bIdx * (bandH + gap);
+          ctx.fillStyle = "rgba(15, 23, 42, 0.65)";
+          ctx.fillRect(padL, y0, plotW, bandH);
+          ctx.strokeStyle = "rgba(51, 65, 85, 0.55)";
+          ctx.lineWidth = 1;
+          ctx.strokeRect(padL, y0, plotW, bandH);
+
+          ctx.fillStyle = "#94a3b8";
+          ctx.font = "bold 9px JetBrains Mono, monospace";
+          ctx.textAlign = "left";
+          ctx.fillText(b.title, padL + 6, y0 + 11);
+
+          b.lines.forEach((ln) => {
+            ctx.strokeStyle = ln.col;
+            ctx.lineWidth = 1.7;
+            ctx.beginPath();
+            sampled.forEach((pt, idx) => {
+              const x = padL + (idx / Math.max(1, sampled.length - 1)) * plotW;
+              const norm = Math.max(0, Math.min(1, (ln.fn(pt) - b.min) / (b.max - b.min)));
+              const y = y0 + bandH - norm * (bandH - 14) - 2;
+              if (idx === 0) ctx.moveTo(x, y);
+              else ctx.lineTo(x, y);
+            });
+            ctx.stroke();
+          });
+        });
+
+        // カーソルシーク線
+        if (roadHoverIdx !== null && pts[roadHoverIdx]) {
+          const ratio = roadHoverIdx / Math.max(1, pts.length - 1);
+          const cx = padL + ratio * plotW;
+          ctx.strokeStyle = "#ffffff";
+          ctx.lineWidth = 1.2;
+          ctx.setLineDash([4, 3]);
+          ctx.beginPath();
+          ctx.moveTo(cx, padT);
+          ctx.lineTo(cx, h - padB);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+      }
+
+      function handleRoadChartSeek(clientX) {
+        const canvas = document.getElementById("roadTelemetryCanvas");
+        const sess = getCurrentViewRoadSession();
+        if (!canvas || !sess || !sess.points || sess.points.length < 2) return;
+        const rect = canvas.getBoundingClientRect();
+        const padL = 44, padR = 14;
+        const plotW = Math.max(1, rect.width - padL - padR);
+        const relX = Math.max(0, Math.min(plotW, clientX - rect.left - padL));
+        const ratio = relX / plotW;
+        const idx = Math.min(sess.points.length - 1, Math.max(0, Math.round(ratio * (sess.points.length - 1))));
+        roadHoverIdx = idx;
+        const pt = sess.points[idx];
+
+        const readout = document.getElementById("roadCursorReadout");
+        if (readout && pt) {
+          readout.textContent =
+            `[${formatHms(pt.t)} / ${pt.dKm.toFixed(2)}km] ${pt.spd}km/h | ${pt.rpm}rpm (${pt.gear > 0 ? pt.gear + "速" : "N"}) | BST:${pt.bst >= 0 ? "+" : ""}${pt.bst.toFixed(2)}bar | ACC:${pt.ped}% BRK:${pt.brk}% | 油温:${pt.oil}°C 水温:${pt.wat}°C`;
+        }
+
+        if (roadMap && pt && pt.lat !== 0 && pt.lng !== 0 && typeof L !== "undefined") {
+          if (!roadSeekMarker) {
+            roadSeekMarker = L.circleMarker([pt.lat, pt.lng], {
+              radius: 8,
+              color: "#ffffff",
+              weight: 2.5,
+              fillColor: "#38bdf8",
+              fillOpacity: 1
+            }).addTo(roadMap);
+          } else {
+            roadSeekMarker.setLatLng([pt.lat, pt.lng]);
+          }
+          roadMap.panTo([pt.lat, pt.lng], { animate: false });
+        }
+        drawRoadTelemetryCharts(sess);
+      }
+
+      function exportRoadCsv() {
+        const sess = getCurrentViewRoadSession();
+        if (!sess || !sess.points || sess.points.length === 0) {
+          showRoadToast("出力する走行データがありません");
+          return;
+        }
+        const header = [
+          "timestamp_iso", "elapsed_sec", "distance_km", "latitude", "longitude",
+          "speed_kmh", "rpm", "gear", "boost_bar", "pedal_pct", "throttle_pct", "brake_pct",
+          "engine_load_pct", "steer_deg", "lat_g", "lon_g",
+          "engine_oil_c", "trans_oil_c", "coolant_c", "intake_iat_c", "ign_adv_deg", "lambda_afr", "battery_v",
+          "awd_front_pct", "elsd_rear_left_pct",
+          "tp_fl_bar", "tp_fr_bar", "tp_rl_bar", "tp_rr_bar",
+          "tt_fl_c", "tt_fr_c", "tt_rl_c", "tt_rr_c"
+        ].join(",");
+
+        const rows = sess.points.map((p) => {
+          const tp = p.tp || [0, 0, 0, 0];
+          const tt = p.tt || [0, 0, 0, 0];
+          return [
+            p.ts, p.t, p.dKm, p.lat, p.lng,
+            p.spd, p.rpm, p.gear, p.bst, p.ped, p.thr, p.brk,
+            p.lod, p.str, p.gx, p.gy,
+            p.oil, p.tra, p.wat, p.iat, p.ign, p.afr, p.bat,
+            p.awdF, p.lsdL,
+            tp[0], tp[1], tp[2], tp[3],
+            tt[0], tt[1], tt[2], tt[3]
+          ].join(",");
+        });
+
+        // Excel文字化け防止のため UTF-8 BOM を付与
+        const bom = "\uFEFF";
+        downloadTextFile(`road_drive_${sess.vehicleCode}_${Date.now()}.csv`, bom + [header].concat(rows).join("\n"), "text/csv;charset=utf-8");
+        showRoadToast(`完全CSVファイル（${sess.points.length}行・全33列）をダウンロードしました`);
+      }
+
+      function exportRoadGpx() {
+        const sess = getCurrentViewRoadSession();
+        if (!sess || !sess.points || sess.points.length === 0) {
+          showRoadToast("出力する走行データがありません");
+          return;
+        }
+        const validPts = sess.points.filter((p) => p.lat !== 0 && p.lng !== 0);
+        const wptsXml = (sess.markers || []).map((m) =>
+          `  <wpt lat="${m.lat}" lon="${m.lng}"><name>${escapeHtml(m.label)}</name></wpt>`
+        ).join("\n");
+        const trkptsXml = validPts.map((p) =>
+          `      <trkpt lat="${p.lat}" lon="${p.lng}"><time>${p.ts}</time><extensions><speed_kmh>${p.spd}</speed_kmh><rpm>${p.rpm}</rpm><gear>${p.gear}</gear><boost>${p.bst}</boost></extensions></trkpt>`
+        ).join("\n");
+
+        const gpx = [
+          `<?xml version="1.0" encoding="UTF-8"?>`,
+          `<gpx version="1.1" creator="Maserati &amp; RS5 Live Telemetry" xmlns="http://www.topografix.com/GPX/1/1">`,
+          `  <metadata><name>${escapeHtml(sess.title)}</name><time>${sess.startedAtIso}</time></metadata>`,
+          wptsXml,
+          `  <trk><name>${escapeHtml(sess.title)}</name><trkseg>`,
+          trkptsXml,
+          `  </trkseg></trk>`,
+          `</gpx>`
+        ].join("\n");
+
+        downloadTextFile(`road_route_${sess.vehicleCode}_${Date.now()}.gpx`, gpx, "application/gpx+xml");
+        showRoadToast(`GPX 1.1ルートファイル（${validPts.length}地点）をダウンロードしました`);
+      }
+
+      function exportRoadJson() {
+        const sess = getCurrentViewRoadSession();
+        if (!sess) {
+          showRoadToast("出力する走行データがありません");
+          return;
+        }
+        downloadTextFile(`road_archive_${sess.vehicleCode}_${Date.now()}.json`, JSON.stringify(sess, null, 2), "application/json");
+        showRoadToast(`フルJSONアーカイブ（${sess.points.length}サンプル）をダウンロードしました`);
       }
 
       // ================= 8. 全22信号モニタリング & デバッグレポート =================
@@ -1894,12 +2683,12 @@
         });
 
         const topBadge = document.getElementById("topSignalHealthBadge");
-        const cntAll = document.getElementById("sigCntAll");
-        const cntOk = document.getElementById("sigCntOk");
-        const cntNg = document.getElementById("sigCntNg");
-        const sumOk = document.getElementById("dbgSummaryOk");
-        const sumSt = document.getElementById("dbgSummaryStatic");
-        const sumNo = document.getElementById("dbgSummaryNone");
+        const cntAll   = document.getElementById("sigCntAll");
+        const cntOk    = document.getElementById("sigCntOk");
+        const cntNg    = document.getElementById("sigCntNg");
+        const sumOk    = document.getElementById("dbgSummaryOk");
+        const sumSt    = document.getElementById("dbgSummaryStatic");
+        const sumNo    = document.getElementById("dbgSummaryNone");
 
         if (topBadge) topBadge.textContent = `${okCnt}/${SIGNAL_DEFINITIONS.length}`;
         if (cntAll) cntAll.textContent = SIGNAL_DEFINITIONS.length;
@@ -1954,7 +2743,7 @@
         const ts = new Date().toTimeString().split(" ")[0];
         const entry = `[${ts}] [${type}] ${text}`;
         debugStore.consoleLines.push(entry);
-        if (debugStore.consoleLines.length > 300) debugStore.consoleLines.shift();
+        if (debugStore.consoleLines.length > 10000) debugStore.consoleLines.shift();
 
         if (consolePaused) return;
         if (type === "RX_PKT" && !consoleShowRawJson) return;
@@ -1968,7 +2757,7 @@
         else div.className = "text-slate-400 break-all";
         div.textContent = entry;
         box.appendChild(div);
-        while (box.children.length > 140) {
+        while (box.children.length > 150) {
           box.removeChild(box.firstChild);
         }
         box.scrollTop = box.scrollHeight;
@@ -1976,13 +2765,13 @@
 
       function updateDebugBoardState() {
         const isOnline = (Date.now() - lastArduinoRxTime) < 3500 && lastArduinoRxTime > 0;
-        const pill = document.getElementById("dbgR4OnlinePill");
-        const canEl = document.getElementById("dbgCanState");
-        const simEl = document.getElementById("dbgSimState");
-        const gpsEl = document.getElementById("dbgGpsState");
-        const modEl = document.getElementById("dbgModelState");
+        const pill   = document.getElementById("dbgR4OnlinePill");
+        const canEl  = document.getElementById("dbgCanState");
+        const simEl  = document.getElementById("dbgSimState");
+        const gpsEl  = document.getElementById("dbgGpsState");
+        const modEl  = document.getElementById("dbgModelState");
         const rssiEl = document.getElementById("dbgRssiState");
-        const hzEl = document.getElementById("dbgHzUptimeState");
+        const hzEl   = document.getElementById("dbgHzUptimeState");
 
         if (pill) {
           pill.textContent = isOnline ? "ONLINE" : "OFFLINE";
@@ -2162,7 +2951,7 @@
         const lapBtn = document.getElementById("lapPageDemoBtn");
         if (btn) {
           btn.textContent = "ON";
-          btn.className = "px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-600 text-white border border-emerald-400";
+          btn.className = "px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-600 text-white border border-emerald-400 cursor-pointer";
         }
         if (lapBtn) lapBtn.textContent = "⏹ デモ停止";
         appendLog("FSW本コース(4,563m) ローカルデモ走行を開始");
@@ -2177,7 +2966,7 @@
         const lapBtn = document.getElementById("lapPageDemoBtn");
         if (btn) {
           btn.textContent = "OFF";
-          btn.className = "px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-800 text-slate-300 border border-slate-700";
+          btn.className = "px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-800 text-slate-300 border border-slate-700 cursor-pointer";
         }
         if (lapBtn) lapBtn.textContent = "▶ FSWデモ走行";
         appendLog("ローカルデモ走行を停止");
@@ -2229,7 +3018,6 @@
         demoDistM += vMs * dt;
         if (demoDistM >= FSW_LENGTH_M) {
           demoDistM -= FSW_LENGTH_M;
-          demoLapSeed++;
         }
 
         updateDashboardUI({
@@ -2240,7 +3028,7 @@
         });
       }
 
-      // ================= 10. ラップ計測 & 複数ラップ比較分析 =================
+      // ================= 10. サーキットラップ計測 & 比較分析 =================
       function initDefaultRepoSession() {
         const sampleA = buildSyntheticFswSession("FSW_REF_A", "GT2 Stradale (基準ベスト)", 106.420, 1.0);
         const sampleB = buildSyntheticFswSession("FSW_CMP_B", "GT2 Stradale (比較走行)", 108.150, 0.97);
@@ -2307,7 +3095,7 @@
         if (startBtn) startBtn.disabled = true;
         if (stopBtn) {
           stopBtn.disabled = false;
-          stopBtn.className = "py-3 px-4 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-black text-sm shadow-lg active:scale-95 transition";
+          stopBtn.className = "py-3 px-4 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-black text-sm shadow-lg active:scale-95 transition cursor-pointer";
         }
         if (dot) dot.className = "w-2 h-2 rounded-full bg-emerald-400 animate-ping pointer-events-none";
         showLapToast("ラップ計測を開始しました（S/Fライン通過でLAP 1計測へ自動移行）");
@@ -2331,7 +3119,7 @@
         if (startBtn) startBtn.disabled = false;
         if (stopBtn) {
           stopBtn.disabled = true;
-          stopBtn.className = "py-3 px-4 rounded-xl bg-slate-800 text-slate-500 border border-slate-700 font-black text-sm transition disabled:opacity-50";
+          stopBtn.className = "py-3 px-4 rounded-xl bg-slate-800 text-slate-500 border border-slate-700 font-black text-sm transition disabled:opacity-50 cursor-pointer";
         }
         if (dot) dot.className = "w-2 h-2 rounded-full bg-white/80 pointer-events-none";
         switchLapTab("analyzer");
@@ -2490,15 +3278,23 @@
 
         const rLap = refObj.lap;
         const cLap = cmpObj.lap;
-        document.getElementById("anRefTime").textContent = formatLapTime(rLap.timeSec);
-        document.getElementById("anRefMeta").textContent = refObj.sess.name;
-        document.getElementById("anCmpTime").textContent = formatLapTime(cLap.timeSec);
-        document.getElementById("anCmpMeta").textContent = cmpObj.sess.name;
-        document.getElementById("anTotalDelta").textContent = formatDelta(cLap.timeSec - rLap.timeSec);
-        document.getElementById("anSectorDeltas").textContent =
-          `S1 ${formatDelta(cLap.s1 - rLap.s1)} / S2 ${formatDelta(cLap.s2 - rLap.s2)}`;
-        document.getElementById("anTopSpeedDiff").textContent = `${cLap.topSpd - rLap.topSpd >= 0 ? "+" : ""}${cLap.topSpd - rLap.topSpd} km/h`;
-        document.getElementById("anTopSpeedDetail").textContent = `A: ${rLap.topSpd} / B: ${cLap.topSpd}`;
+        const refTimeEl = document.getElementById("anRefTime");
+        const refMetaEl = document.getElementById("anRefMeta");
+        const cmpTimeEl = document.getElementById("anCmpTime");
+        const cmpMetaEl = document.getElementById("anCmpMeta");
+        const totDelEl  = document.getElementById("anTotalDelta");
+        const secDelEl  = document.getElementById("anSectorDeltas");
+        const topDiffEl = document.getElementById("anTopSpeedDiff");
+        const topDetEl  = document.getElementById("anTopSpeedDetail");
+
+        if (refTimeEl) refTimeEl.textContent = formatLapTime(rLap.timeSec);
+        if (refMetaEl) refMetaEl.textContent = refObj.sess.name;
+        if (cmpTimeEl) cmpTimeEl.textContent = formatLapTime(cLap.timeSec);
+        if (cmpMetaEl) cmpMetaEl.textContent = cmpObj.sess.name;
+        if (totDelEl)  totDelEl.textContent  = formatDelta(cLap.timeSec - rLap.timeSec);
+        if (secDelEl)  secDelEl.textContent  = `S1 ${formatDelta(cLap.s1 - rLap.s1)} / S2 ${formatDelta(cLap.s2 - rLap.s2)}`;
+        if (topDiffEl) topDiffEl.textContent = `${cLap.topSpd - rLap.topSpd >= 0 ? "+" : ""}${cLap.topSpd - rLap.topSpd} km/h`;
+        if (topDetEl)  topDetEl.textContent  = `A: ${rLap.topSpd} / B: ${cLap.topSpd}`;
 
         if (anRefPoly && anCmpPoly) {
           anRefPoly.setLatLngs(rLap.points.map((p) => [p.lat, p.lng]));
@@ -2511,7 +3307,7 @@
 
       function drawCompareCanvas(rLap, cLap) {
         const canvas = document.getElementById("telemetryCompareCanvas");
-        if (!canvas) return;
+        if (!canvas || !canvas.parentElement) return;
         const rect = canvas.parentElement.getBoundingClientRect();
         if (rect.width <= 0 || rect.height <= 0) return;
         const dpr = window.devicePixelRatio || 1;
@@ -2774,7 +3570,7 @@
 
         appendConsoleStream("RX_PKT", jsonStr);
         debugStore.rawPackets.push({ ts: now, data: raw });
-        if (debugStore.rawPackets.length > 200) debugStore.rawPackets.shift();
+        if (debugStore.rawPackets.length > 500) debugStore.rawPackets.shift();
 
         if (Array.isArray(raw.tp) && raw.tp.length >= 4) {
           latestTireState.tp = raw.tp.map(Number);
@@ -2837,7 +3633,6 @@
         if (arduinoSimActive && localDemoTimer) {
           stopLocalDemo();
         }
-        lastWasDemoSource = arduinoSimActive;
 
         evaluateSignalPacket(raw);
         updateDashboardUI(d);
@@ -2865,16 +3660,16 @@
         rxTimestamps = rxTimestamps.filter((t) => now - t <= 2000);
         const hz = (rxTimestamps.length / 2).toFixed(1);
 
-        const hzBadge = document.getElementById("topHzBadge");
-        const monHz = document.getElementById("monHz");
+        const hzBadge    = document.getElementById("topHzBadge");
+        const monHz      = document.getElementById("monHz");
         const monElapsed = document.getElementById("monElapsed");
-        const dot = document.getElementById("monitorBtnDot");
-        const srcBadge = document.getElementById("sourceBadge");
-        const monR4 = document.getElementById("monArduinoStatus");
-        const monCan = document.getElementById("monCanStatus");
-        const monRssi = document.getElementById("monRssi");
-        const monUp = document.getElementById("monUptime");
-        const monMod = document.getElementById("monModel");
+        const dot        = document.getElementById("monitorBtnDot");
+        const srcBadge   = document.getElementById("sourceBadge");
+        const monR4      = document.getElementById("monArduinoStatus");
+        const monCan     = document.getElementById("monCanStatus");
+        const monRssi    = document.getElementById("monRssi");
+        const monUp      = document.getElementById("monUptime");
+        const monMod     = document.getElementById("monModel");
         const r4DummyBtn = document.getElementById("topR4DummyBtn");
         const r4DummyTxt = document.getElementById("topR4DummyText");
 
@@ -2884,12 +3679,7 @@
           monElapsed.textContent = lastArduinoRxTime > 0 ? `${((now - lastArduinoRxTime) / 1000).toFixed(1)}s` : "未受信";
         }
         if (monRssi && latestRssi !== null) monRssi.textContent = `${latestRssi} dBm`;
-        if (monUp) {
-          const h = String(Math.floor(latestUptime / 3600)).padStart(2, "0");
-          const m = String(Math.floor((latestUptime % 3600) / 60)).padStart(2, "0");
-          const s = String(latestUptime % 60).padStart(2, "0");
-          monUp.textContent = `${h}:${m}:${s}`;
-        }
+        if (monUp) monUp.textContent = formatHms(latestUptime);
         if (monMod) monMod.textContent = arduinoSyncedModel || "UNSYNCED";
 
         if (dot) {
@@ -2904,10 +3694,10 @@
 
         if (r4DummyBtn && r4DummyTxt) {
           if (isOnline && arduinoSimActive) {
-            r4DummyBtn.className = "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold bg-cyan-950 text-cyan-200 border border-cyan-500 active:scale-95 transition";
+            r4DummyBtn.className = "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold bg-cyan-950 text-cyan-200 border border-cyan-500 active:scale-95 transition cursor-pointer";
             r4DummyTxt.textContent = "R4ダミー受信中";
           } else {
-            r4DummyBtn.className = "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-700 active:scale-95 transition";
+            r4DummyBtn.className = "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-700 active:scale-95 transition cursor-pointer";
             r4DummyTxt.textContent = "R4ダミー検証";
           }
         }
@@ -2941,14 +3731,33 @@
       function switchMainView(mode) {
         activeViewMode = mode;
         const liveEl = document.getElementById("liveMonitorView");
-        const dbgEl = document.getElementById("debugConsoleView");
-        const lapEl = document.getElementById("lapAnalyzerView");
+        const roadEl = document.getElementById("roadLoggerView");
+        const dbgEl  = document.getElementById("debugConsoleView");
+        const lapEl  = document.getElementById("lapAnalyzerView");
 
         if (liveEl) liveEl.classList.toggle("view-hidden", mode !== "live");
-        if (dbgEl) dbgEl.classList.toggle("view-hidden", mode !== "debug");
-        if (lapEl) lapEl.classList.toggle("view-hidden", mode !== "lap");
+        if (roadEl) roadEl.classList.toggle("view-hidden", mode !== "road");
+        if (dbgEl)  dbgEl.classList.toggle("view-hidden", mode !== "debug");
+        if (lapEl)  lapEl.classList.toggle("view-hidden", mode !== "lap");
 
-        if (mode === "debug") {
+        if (mode === "road") {
+          refreshRoadArchiveSelect();
+          const curSess = getCurrentViewRoadSession();
+          if (curSess) {
+            updateRoadStatsUI(curSess);
+            drawRoadTelemetryCharts(curSess);
+          }
+          setTimeout(() => {
+            if (roadMap) {
+              roadMap.invalidateSize();
+              if (curSess && curSess.points && curSess.points.length > 1) {
+                fitRoadSessionBounds(curSess);
+              } else {
+                roadMap.setView([lastLat, lastLng], 15);
+              }
+            }
+          }, 120);
+        } else if (mode === "debug") {
           renderSignalMatrix();
           updateDebugBoardState();
         } else if (mode === "lap") {
@@ -3009,6 +3818,13 @@
               selectVehicleModel(target.dataset.model, true);
               closeDrawer();
               break;
+            case "toggle-road-view":
+              switchMainView(activeViewMode === "road" ? "live" : "road");
+              break;
+            case "open-road-mode-from-drawer":
+              closeDrawer();
+              switchMainView("road");
+              break;
             case "toggle-debug-view":
               switchMainView(activeViewMode === "debug" ? "live" : "debug");
               break;
@@ -3060,13 +3876,16 @@
               demoSpeedMult = demoSpeedMult === 1 ? 2 : demoSpeedMult === 2 ? 4 : 1;
               target.textContent = `${demoSpeedMult}x`;
               break;
-            case "reset-peaks":
+            case "reset-peaks": {
               peakSpeed = 0;
               maxTotalG = 0;
-              document.getElementById("peakSpeedLbl").textContent = "PEAK: 0 km/h";
-              document.getElementById("maxGLbl").textContent = "MAX: 0.00G";
+              const pk = document.getElementById("peakSpeedLbl");
+              const mg = document.getElementById("maxGLbl");
+              if (pk) pk.textContent = "PEAK: 0 km/h";
+              if (mg) mg.textContent = "MAX: 0.00G";
               appendLog("ピーク値をリセットしました");
               break;
+            }
             case "open-monitor-modal": {
               const m = document.getElementById("monitorModal");
               if (m) { m.classList.remove("hidden"); m.classList.add("flex"); }
@@ -3108,6 +3927,45 @@
             case "fit-fsw-recorder-map":
               if (recMap) recMap.setView([35.3705, 138.9280], 15);
               break;
+            // 公道ドライブ・ロガー操作アクション
+            case "road-start":
+              startRoadLogging();
+              break;
+            case "road-stop":
+              stopRoadLogging();
+              break;
+            case "road-add-marker":
+              addRoadCheckpoint();
+              break;
+            case "road-toggle-follow":
+              roadFollowCar = !roadFollowCar;
+              target.textContent = roadFollowCar ? "🎯 追従中" : "🔓 自由移動";
+              break;
+            case "road-fit-bounds":
+              fitRoadSessionBounds(getCurrentViewRoadSession());
+              break;
+            case "road-export-csv":
+              exportRoadCsv();
+              break;
+            case "road-export-gpx":
+              exportRoadGpx();
+              break;
+            case "road-export-json":
+              exportRoadJson();
+              break;
+            case "road-delete-selected": {
+              const sess = getCurrentViewRoadSession();
+              if (sess && (!activeRoadSession || sess.id !== activeRoadSession.id)) {
+                deleteRoadSessionFromDb(sess.id);
+                renderSelectedRoadSession();
+                showRoadToast("選択したドライブ履歴を削除しました");
+              }
+              break;
+            }
+            case "hide-road-toast":
+              document.getElementById("roadToastBanner")?.classList.add("hidden");
+              break;
+            // デバッグ画面アクション
             case "set-sig-filter":
               signalFilterMode = target.dataset.filter || "all";
               document.querySelectorAll(".dbg-filter-btn").forEach((b) => {
@@ -3135,6 +3993,7 @@
             case "export-debug-json":
               exportDebugJson();
               break;
+            // ラップ計測・分析アクション
             case "switch-lap-tab":
               switchLapTab(target.dataset.tab);
               break;
@@ -3195,6 +4054,24 @@
           }
         });
 
+        // 公道ロガーアーカイブ選択変更＆波形シーク
+        document.getElementById("roadArchiveSelect")?.addEventListener("change", renderSelectedRoadSession);
+
+        const roadCanvas = document.getElementById("roadTelemetryCanvas");
+        if (roadCanvas) {
+          roadCanvas.addEventListener("mousemove", (e) => handleRoadChartSeek(e.clientX));
+          roadCanvas.addEventListener("touchmove", (e) => {
+            if (e.touches && e.touches.length > 0) {
+              handleRoadChartSeek(e.touches[0].clientX);
+            }
+          }, { passive: true });
+          roadCanvas.addEventListener("touchstart", (e) => {
+            if (e.touches && e.touches.length > 0) {
+              handleRoadChartSeek(e.touches[0].clientX);
+            }
+          }, { passive: true });
+        }
+
         document.getElementById("dbgCustomCmdInput")?.addEventListener("keydown", (e) => {
           if (e.key === "Enter") {
             e.preventDefault();
@@ -3239,44 +4116,63 @@
         window.addEventListener("resize", () => {
           if (smoothLastD) updateDashboardUI(smoothLastD);
           if (activeViewMode === "lap" && activeLapTab === "analyzer") renderAnalyzerComparison();
+          if (activeViewMode === "road") {
+            const cur = getCurrentViewRoadSession();
+            if (cur) drawRoadTelemetryCharts(cur);
+          }
         });
       }
 
       // ================= 14. アプリケーション起動初期化 =================
       function initApp() {
+        // 1. 何よりも先にイベントハンドラを登録し、外部ライブラリ遅延時でも全ボタンを即時有効化
+        bindEvents();
+
         let savedVeh = "GRECALE";
         try {
           const v = localStorage.getItem("maserati_selected_vehicle");
           if (v && VEHICLE_PROFILES[v]) savedVeh = v;
         } catch (e) {}
 
-        buildShiftLights();
-        buildFswTrack();
-        buildDrawerVehicleButtons();
-        selectVehicleModel(savedVeh, false);
-        restoreDebugStateFromLocalStorage();
-        updateSignalCountsUI();
-        renderSignalMatrix();
-        drawGForceBall(0, 0);
-        drawChassisDiagram(0, 0, 0);
-        initMaps();
-        initDefaultRepoSession();
+        try {
+          buildShiftLights();
+          buildFswTrack();
+          buildDrawerVehicleButtons();
+          selectVehicleModel(savedVeh, false);
+          restoreDebugStateFromLocalStorage();
+          updateSignalCountsUI();
+          renderSignalMatrix();
+          drawGForceBall(0, 0);
+          drawChassisDiagram(0, 0, 0);
+        } catch (e) {
+          console.error("UI init error:", e);
+        }
 
-        const initialUrl = (window.location.protocol.startsWith("http") && window.location.hostname)
-          ? window.location.href
-          : DEFAULT_SHARE_URL;
-        const qrInput = document.getElementById("qrUrlInput");
-        if (qrInput) qrInput.value = initialUrl;
-        renderQrCodes(initialUrl);
+        try {
+          initMaps();
+          initDefaultRepoSession();
+          initRoadIndexedDb();
+          refreshRoadArchiveSelect();
+        } catch (e) {
+          console.error("Map/DB init error:", e);
+        }
 
-        bindEvents();
+        try {
+          const initialUrl = (window.location.protocol.startsWith("http") && window.location.hostname)
+            ? window.location.href
+            : DEFAULT_SHARE_URL;
+          const qrInput = document.getElementById("qrUrlInput");
+          if (qrInput) qrInput.value = initialUrl;
+          renderQrCodes(initialUrl);
+        } catch (e) {}
+
         connectMqtt();
 
         setInterval(updateStatusIndicators, 500);
         setInterval(saveDebugStateToLocalStorage, 4000);
         requestAnimationFrame(renderSmoothGaugesLoop);
 
-        appendLog("ダッシュボード初期化完了（全ボタン・60fpsメーター・自動車種同期有効）");
+        appendLog("ダッシュボード初期化完了（全ボタン・公道長時間ロガー・60fpsメーター有効）");
       }
 
       if (document.readyState === "loading") {
